@@ -1,0 +1,6 @@
+{
+  "name": "AlphaCounsel — Legal Practice Operating System",
+  "description": "Enterprise-grade legal practice management, ethical wall authorization, legal hold preservation, document vault, WIP & trust accounting, and AI drafting studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: 'Newsreader', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+.font-legal-heading {
+  font-family: var(--font-serif);
+}
+
+.font-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Legal draft watermark background pattern for drafts */
+.watermark-draft {
+  position: relative;
+}
+.watermark-draft::after {
+  content: "DRAFT — PRIVILEGED & CONFIDENTIAL";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-serif);
+  font-size: 3.5rem;
+  font-weight: 700;
+  color: rgba(239, 68, 68, 0.07);
+  pointer-events: none;
+  transform: rotate(-25deg);
+  z-index: 10;
+  user-select: none;
+}
+
+/* Custom scrollbar for modern light DMS workspace */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.8);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+/* Folder Tab Contour styling for Google Drive / Legal DMS folder cards */
+.folder-tab-shape {
+  position: relative;
+  border-top-left-radius: 1.25rem;
+  border-top-right-radius: 1.25rem;
+  border-bottom-left-radius: 1.25rem;
+  border-bottom-right-radius: 1.25rem;
+}
+
+/* ==========================================================================
+   Light Mode High-Prominence Typography & Contrast Enhancement System
+   ========================================================================== */
+
+/* Universal light mode base font color & smoothing */
+html[data-theme="light"],
+body[data-theme="light"],
+.light,
+[data-theme="light"] {
+  color: #0f172a; /* Deep Slate 900 base text */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Light mode text color promotions:
+   In light mode, elevate low-contrast gray/slate classes to prominent,
+   crisp, easily readable shades for enhanced clarity and authority. */
+html[data-theme="light"] .text-slate-400,
+body[data-theme="light"] .text-slate-400,
+.light .text-slate-400,
+[data-theme="light"] .text-slate-400 {
+  color: #334155; /* Deep Slate 700 (contrast > 7.5:1 against white) */
+}
+
+html[data-theme="light"] .text-slate-500,
+body[data-theme="light"] .text-slate-500,
+.light .text-slate-500,
+[data-theme="light"] .text-slate-500 {
+  color: #1e293b; /* Rich Slate 800 (contrast > 11:1 against white) */
+}
+
+html[data-theme="light"] .text-slate-600,
+body[data-theme="light"] .text-slate-600,
+.light .text-slate-600,
+[data-theme="light"] .text-slate-600 {
+  color: #0f172a; /* Deep Slate 900 (contrast > 15:1 against white) */
+}
+
+html[data-theme="light"] .text-slate-700,
+body[data-theme="light"] .text-slate-700,
+.light .text-slate-700,
+[data-theme="light"] .text-slate-700 {
+  color: #090d16; /* Inky Near-Black */
+}
+
+html[data-theme="light"] .text-slate-800,
+body[data-theme="light"] .text-slate-800,
+.light .text-slate-800,
+[data-theme="light"] .text-slate-800,
+html[data-theme="light"] .text-slate-900,
+body[data-theme="light"] .text-slate-900,
+.light .text-slate-900,
+[data-theme="light"] .text-slate-900 {
+  color: #050811; /* Jet Black */
+}
+
+/* Gray palette equivalents */
+html[data-theme="light"] .text-gray-400,
+.light .text-gray-400 {
+  color: #374151;
+}
+
+html[data-theme="light"] .text-gray-500,
+.light .text-gray-500 {
+  color: #1f2937;
+}
+
+html[data-theme="light"] .text-gray-600,
+.light .text-gray-600 {
+  color: #111827;
+}
+
+/* Light mode icon color promotion */
+html[data-theme="light"] svg.text-slate-400,
+.light svg.text-slate-400 {
+  color: #475569;
+}
+
+html[data-theme="light"] svg.text-slate-500,
+.light svg.text-slate-500 {
+  color: #334155;
+}
+
+/* Form inputs & placeholder visibility in light mode */
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder,
+.light input::placeholder,
+.light textarea::placeholder {
+  color: #475569; /* Slate 600 instead of washed-out Slate 400 */
+  opacity: 0.95;
+}
+
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea,
+.light input,
+.light select,
+.light textarea {
+  color: #090d16;
+  font-weight: 500;
+}
+
+/* Headings and labels in light mode */
+html[data-theme="light"] h1,
+html[data-theme="light"] h2,
+html[data-theme="light"] h3,
+html[data-theme="light"] h4,
+.light h1,
+.light h2,
+.light h3,
+.light h4 {
+  color: #050811;
+  font-weight: 700;
+}
+
+/* Subtle labels and uppercase tracking subtitles in light mode */
+html[data-theme="light"] .tracking-wider,
+html[data-theme="light"] .tracking-widest,
+.light .tracking-wider,
+.light .tracking-widest {
+  font-weight: 600;
+}
+
