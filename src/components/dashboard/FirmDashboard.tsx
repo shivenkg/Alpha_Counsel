@@ -16,6 +16,7 @@ import {
   Sparkles,
   TrendingUp,
   Users,
+  Briefcase,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { formatINR } from '../../utils/currency';
@@ -174,9 +175,9 @@ export const FirmDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Total Trust Balance */}
+        {/* Active Practice Matters */}
         <div
-          onClick={() => setCurrentView('trust')}
+          onClick={() => setCurrentView('matters')}
           className={`rounded-2xl p-5 cursor-pointer hover:shadow-md transition-all group border shadow-xs ${
             isDark
               ? 'bg-slate-900 border-slate-800 hover:border-blue-500/40'
@@ -189,17 +190,17 @@ export const FirmDashboard: React.FC = () => {
             }`}
           >
             <span className="text-[11px] uppercase tracking-wider font-semibold">
-              IOLTA Escrow Trust
+              Active Matters & Repos
             </span>
             <div className="w-7 h-7 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-500 flex items-center justify-center">
-              <Landmark className="w-4 h-4" />
+              <Briefcase className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-bold font-num text-blue-500">
-            {formatINR(totalTrustBalance)}
+            {matters.length}
           </div>
           <div className={`text-[11px] mt-1 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-            Strictly segregated ledger
+            Assigned practice dockets
           </div>
         </div>
 

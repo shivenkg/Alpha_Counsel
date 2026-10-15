@@ -34,6 +34,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { calculateMatterFinancials, formatCurrency } from '../../services/financials';
 import { ClientCredential, Invoice, VaultDocument } from '../../types';
+import { ClientPortalAccess } from './ClientPortalAccess';
 
 // Pre-configured client credentials for the portal
 const DEMO_CLIENT_CREDENTIALS: ClientCredential[] = [
@@ -86,7 +87,7 @@ export const ClientPortalView: React.FC = () => {
   const [authPassword, setAuthPassword] = useState<string>('Apex2026!');
   const [auth2FaCode, setAuth2FaCode] = useState<string>('849201');
   const [authError, setAuthError] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'overview' | 'matters' | 'documents' | 'billing' | 'trust'>(
+  const [activeTab, setActiveTab] = useState<'overview' | 'matters' | 'documents' | 'billing' | 'shares'>(
     'overview'
   );
 
@@ -529,21 +530,17 @@ export const ClientPortalView: React.FC = () => {
           </div>
         </div>
 
-        {/* Fiduciary IOLTA Trust Balance */}
+        {/* Client Shared Documents */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-1">
           <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Escrow Trust Balance</span>
-            <Landmark className="w-4 h-4 text-sky-400" />
+            <span>Client Disclosures & Docs</span>
+            <FolderLock className="w-4 h-4 text-sky-400" />
           </div>
           <div className="text-2xl font-bold font-num text-sky-300">
-            {formatCurrency(totalTrust)}
+            {clientDocs.length} Files
           </div>
           <div className="text-[11px] text-slate-400 flex items-center gap-1">
-            {totalTrust >= totalEvergreenMinimum ? (
-              <span className="text-emerald-400">● Evergreen buffer healthy</span>
-            ) : (
-              <span className="text-amber-400">● Replenishment recommended</span>
-            )}
+            <span className="text-emerald-400">● TLS 1.3 encrypted</span>
           </div>
         </div>
 
@@ -630,14 +627,15 @@ export const ClientPortalView: React.FC = () => {
           Invoices & Payments ({clientInvoices.length})
         </button>
         <button
-          onClick={() => setActiveTab('trust')}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-            activeTab === 'trust'
+          onClick={() => setActiveTab('shares')}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+            activeTab === 'shares'
               ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30'
               : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          IOLTA Escrow Trust ({formatCurrency(totalTrust)})
+          <KeyRound className="w-3.5 h-3.5 text-amber-500" />
+          <span>Secure Document Shares & Expirations</span>
         </button>
       </div>
 
@@ -996,97 +994,10 @@ export const ClientPortalView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 5: IOLTA Trust Escrow */}
-      {activeTab === 'trust' && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 space-y-4 shadow-xl">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div>
-              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                <Landmark className="w-4 h-4 text-sky-400" />
-                Segregated Client Escrow Trust Accounts (IOLTA)
-              </h3>
-              <p className="text-xs text-slate-400">
-                Strict segregation under State Bar Rule 1.15. Retainer funds remain client property until earned.
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setReplenishMatterId(clientMatters[0]?.id || '');
-                setShowReplenishModal(true);
-              }}
-              className="px-3 py-1.5 bg-sky-600 text-white font-semibold text-xs rounded-lg hover:bg-sky-500 transition-colors shadow-sm"
-            >
-              Replenish Retainer Deposit
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {clientMatters.map((m) => {
-              const matterTxs = trustTransactions.filter((t) => t.matterId === m.id);
-              const balance = matterTxs.reduce((sum, t) => sum + t.amount, 0);
-              const minimum = m.evergreenTrustMinimum || 0;
-
-              return (
-                <div
-                  key={m.id}
-                  className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-amber-400">
-                          {m.matterNumber}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-200">{m.title}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-mono">
-                        Escrow Ref: Chase Bank IOLTA Trust Account #***-9182
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-base font-bold font-num text-sky-300">
-                        {formatCurrency(balance)}
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        Evergreen Threshold: {formatCurrency(minimum)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Transaction History for Matter */}
-                  <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
-                    <span className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
-                      Recent Escrow Transactions
-                    </span>
-                    {matterTxs.length === 0 ? (
-                      <div className="text-xs text-slate-500 italic">No transactions recorded.</div>
-                    ) : (
-                      matterTxs.slice(-3).reverse().map((tx) => (
-                        <div
-                          key={tx.id}
-                          className="flex items-center justify-between text-xs p-1.5 rounded bg-slate-900/60"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-400 font-mono">{tx.date}</span>
-                            <span className="text-slate-200">{tx.description}</span>
-                          </div>
-                          <span
-                            className={`font-num font-semibold ${
-                              tx.amount > 0 ? 'text-emerald-400' : 'text-slate-300'
-                            }`}
-                          >
-                            {tx.amount > 0 ? '+' : ''}
-                            {formatCurrency(tx.amount)}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      {/* Tab 5: Secure Document Shares & Expirations */}
+      {activeTab === 'shares' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+          <ClientPortalAccess embedded matter={clientMatters[0]} />
         </div>
       )}
 

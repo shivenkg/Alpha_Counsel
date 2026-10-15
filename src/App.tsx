@@ -11,9 +11,9 @@ import { MatterWorkspace } from './components/matters/MatterWorkspace';
 import { Sidebar } from './components/navigation/Sidebar';
 import { TopBar } from './components/navigation/TopBar';
 import { GlobalSearchModal } from './components/search/GlobalSearchModal';
-import { TrustAccountingView } from './components/trust/TrustAccountingView';
 import { FirmVaultView } from './components/vault/FirmVaultView';
 import { UploadProgressDrawer } from './components/vault/UploadProgressDrawer';
+import { ClientPortalView } from './components/portal/ClientPortalView';
 import { AppProvider, useApp } from './context/AppContext';
 
 const MainLayout: React.FC = () => {
@@ -77,10 +77,10 @@ const MainLayout: React.FC = () => {
             )}
             {currentView === 'clients' && <ClientsView />}
             {currentView === 'conflicts' && <ConflictManagementView />}
-            {currentView === 'admin' && <RbacManagementView />}
+            {(currentView === 'admin' || currentView === 'audit-log') && <RbacManagementView />}
             {currentView === 'vault' && <FirmVaultView />}
             {currentView === 'billing' && <BillingCenterView />}
-            {currentView === 'trust' && <TrustAccountingView />}
+            {(currentView === 'client-portal' || currentView === 'portal') && <ClientPortalView />}
 
             {/* Global Search Dialog (⌘K) */}
             <GlobalSearchModal />

@@ -16,6 +16,8 @@ import {
   X,
   UploadCloud,
   Check,
+  History,
+  Globe,
 } from 'lucide-react';
 import { MainNavView, useApp } from '../../context/AppContext';
 
@@ -33,6 +35,8 @@ export const BreadcrumbMenu: React.FC<BreadcrumbMenuProps> = ({ isDark }) => {
     ethicalWalls,
     activeMatterId,
     currentTenant,
+    setAdminTab,
+    audit_events,
   } = useApp();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -125,15 +129,6 @@ export const BreadcrumbMenu: React.FC<BreadcrumbMenuProps> = ({ isDark }) => {
       badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
     },
     {
-      id: 'trust',
-      label: 'IOLTA Trust Ledger',
-      category: 'Financials & Governance',
-      description: 'Strictly segregated escrow accounting and three-way reconciliation',
-      icon: Landmark,
-      badge: 'Segregated',
-      badgeColor: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
-    },
-    {
       id: 'conflicts',
       label: 'Conflict & Screens',
       category: 'Financials & Governance',
@@ -152,11 +147,29 @@ export const BreadcrumbMenu: React.FC<BreadcrumbMenuProps> = ({ isDark }) => {
       badgeColor: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30',
     },
     {
+      id: 'client-portal',
+      label: 'Client Portal & Shares',
+      category: 'Financials & Governance',
+      description: 'Expiring document shares, external access logs, and client billing portal',
+      icon: Globe,
+      badge: 'Secure',
+      badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
+    },
+    {
       id: 'admin',
       label: 'Portal Admin & RBAC',
       category: 'Administration',
-      description: 'Role-based access matrix, security logs, and firm policies',
+      description: 'Role-based access matrix, security policies, and user seats',
       icon: Key,
+    },
+    {
+      id: 'audit-log',
+      label: 'Audit Log & Security Trail',
+      category: 'Administration',
+      description: 'Forensic tracking of ethical wall changes and document access',
+      icon: History,
+      badge: `${audit_events.length} Events`,
+      badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
     },
   ];
 
@@ -378,7 +391,12 @@ export const BreadcrumbMenu: React.FC<BreadcrumbMenuProps> = ({ isDark }) => {
                         <button
                           key={item.id}
                           onClick={() => {
-                            setCurrentView(item.id);
+                            if (item.id === 'audit-log') {
+                              setAdminTab('audit');
+                              setCurrentView('admin');
+                            } else {
+                              setCurrentView(item.id);
+                            }
                             setIsOpen(false);
                           }}
                           className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all group ${

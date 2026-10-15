@@ -16,7 +16,8 @@ import { useApp } from '../../context/AppContext';
 import { useAudit } from '../../hooks/useAudit';
 import { scanDroppedItems, scanInputFiles, ScannedUploadItem } from '../../utils/fileUpload';
 import { UploadTask } from './UploadProgressDrawer';
-import { VaultDocument } from '../../types';
+import { VaultDocument, DocumentActivityEvent } from '../../types';
+import { ocrService } from '../../services/ocrService';
 
 interface VaultDropzoneProps {
   currentFolder?: string;
@@ -108,18 +109,42 @@ export const VaultDropzone: React.FC<VaultDropzoneProps> = ({
       const docTitle = item.file.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ');
 
       // Simulate progress ticks
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 90));
       if (onUploadProgress) onUploadProgress(task.id, 50);
 
-      await new Promise((r) => setTimeout(r, 120));
+      // Perform Optical Character Recognition (OCR) extraction & indexing
+      const ocrResult = await ocrService.extractTextFromScan(item.file);
+
+      await new Promise((r) => setTimeout(r, 90));
       if (onUploadProgress) onUploadProgress(task.id, 85);
 
-      const ocrMock =
-        fileType === 'xlsx'
-          ? `[EXCEL FINANCIAL MODEL]\nFile: ${item.file.name}\nQuantum Claim Damages Sheet\nVerified Line Items: 24\nTotal Currency Value: INR 29,24,250.00\nFormula Checks: Passed.`
-          : `[FORENSIC OCR EXTRACTION]\nDocument: ${docTitle}\nIngested into matter [${activeMatter.matterNumber}] ${activeMatter.title}.\nPreservation status: Certified immutable record.\nExtracted Entities: Parties, Claims, Evidentiary exhibits.`;
+      const now = new Date().toISOString();
+      const uploadActivity: DocumentActivityEvent = {
+        id: `act-${Date.now()}-up-${i}`,
+        action: 'uploaded',
+        label: 'Uploaded to vault',
+        details: `File "${item.file.name}" uploaded to folder "${assignedFolder}"`,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        timestamp: now,
+      };
 
-      // Add to context
+      const ocrActivity: DocumentActivityEvent = {
+        id: `act-${Date.now()}-ocr-${i}`,
+        action: 'ocr_extracted',
+        label: 'OCR text extracted & indexed',
+        details: `Optical Character Recognition extracted ${ocrResult.characterCount} characters (${ocrResult.wordCount} words) with ${ocrResult.confidenceScore}% confidence. Full-text search index updated.`,
+        userName: 'DocuVault OCR Engine',
+        userRole: 'System',
+        timestamp: now,
+        metadata: {
+          confidenceScore: ocrResult.confidenceScore,
+          characterCount: ocrResult.characterCount,
+          wordCount: ocrResult.wordCount,
+        },
+      };
+
+      // Add to context with OCR fields and activity log
       const createdDoc: VaultDocument = {
         id: `doc-${Date.now()}-${i}`,
         matterId: activeMatter.id,
@@ -128,19 +153,25 @@ export const VaultDropzone: React.FC<VaultDropzoneProps> = ({
         fileName: item.file.name,
         fileType,
         fileSize: item.sizeFormatted,
-        createdAt: new Date().toISOString().split('T')[0],
+        createdAt: now.split('T')[0],
         createdBy: currentUser.name,
         isHeld: activeMatter.hasActiveHold || false,
-        ocrExtractedText: ocrMock,
-        currentVersion: '1.0',
-        tags: [assignedFolder, fileType.toUpperCase(), 'INGESTED'],
+        ocrExtractedText: ocrResult.text,
+        ocrConfidence: ocrResult.confidenceScore,
+        ocrCharacterCount: ocrResult.characterCount,
+        ocrWordCount: ocrResult.wordCount,
+        ocrIndexedAt: ocrResult.scannedAt,
+        activityLog: [ocrActivity, uploadActivity],
+        currentVersion: 'v1.0',
+        tags: [assignedFolder, fileType.toUpperCase(), 'OCR Indexed'],
         versions: [
           {
-            versionNumber: '1.0',
-            uploadedAt: new Date().toISOString().split('T')[0],
+            versionNumber: 'v1.0',
+            uploadedAt: now.split('T')[0],
             uploadedBy: currentUser.name,
             fileSize: item.sizeFormatted,
-            notes: 'Initial ingestion into Counsel Repos vault',
+            notes: 'Initial scan ingestion & OCR full-text indexing',
+            snapshotContent: ocrResult.text,
           },
         ],
         confidentialityLevel: activeMatter.hasActiveHold

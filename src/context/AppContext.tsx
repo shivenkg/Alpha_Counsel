@@ -21,8 +21,14 @@ import {
   LICENSE_PLANS,
   SUPER_ADMIN_USER,
 } from '../data/saasData';
+import {
+  INITIAL_LEGAL_TEMPLATES,
+  INITIAL_PORTAL_SHARES,
+} from '../data/legalTemplates';
 import { DEFAULT_ROLE_PERMISSIONS } from '../services/rbac';
 import {
+  AILegalTemplate,
+  ClientPortalShare,
   AuditEvent,
   BoundedDomain,
   ChronologyEvent,
@@ -48,7 +54,12 @@ import {
   UTBMSCode,
   VaultDocument,
   DocumentVersion,
+  CustomDocumentTag,
+  OCRResult,
+  DocumentActivityEvent,
 } from '../types';
+import { INITIAL_CUSTOM_TAGS } from '../utils/tagColors';
+import { ocrService } from '../services/ocrService';
 
 export type MainNavView =
   | 'dashboard'
@@ -65,7 +76,8 @@ export type MainNavView =
   | 'precedents'
   | 'admin'
   | 'client-portal'
-  | 'super-admin';
+  | 'super-admin'
+  | 'audit-log';
 
 export type MatterSubTab =
   | 'overview'
@@ -121,6 +133,8 @@ interface AppContextType {
   // Navigation
   currentView: MainNavView;
   setCurrentView: (view: MainNavView) => void;
+  adminTab: 'matrix' | 'users' | 'simulator' | 'audit';
+  setAdminTab: (tab: 'matrix' | 'users' | 'simulator' | 'audit') => void;
   activeMatterId: string | null;
   setActiveMatterId: (id: string | null) => void;
   matterSubTab: MatterSubTab;
@@ -207,8 +221,10 @@ interface AppContextType {
     targetVersionNumber: string,
     reason?: string
   ) => boolean;
+  runDocumentOCR: (docId: string) => Promise<OCRResult>;
   toggleEthicalWall: (ruleId: string) => void;
   addEthicalWall: (rule: Omit<EthicalWallRule, 'id'>) => void;
+  removeEthicalWall: (ruleId: string) => void;
   createLegalHold: (hold: Omit<LegalHold, 'id' | 'createdAt' | 'status' | 'tamperProofHash'>) => void;
   requestReleaseLegalHold: (holdId: string, secondApproverId: string, justification: string) => void;
   approveLegalHoldRelease: (holdId: string) => void;
@@ -223,12 +239,62 @@ interface AppContextType {
     matterNumber?: string
   ) => void;
 
+  // Legal Templates & Client Portal Sharing
+  legalTemplates: AILegalTemplate[];
+  addLegalTemplate: (template: Omit<AILegalTemplate, 'id' | 'lastUpdated'>) => AILegalTemplate;
+  updateLegalTemplate: (templateId: string, updates: Partial<AILegalTemplate>) => void;
+  deleteLegalTemplate: (templateId: string) => void;
+  clientPortalShares: ClientPortalShare[];
+  createPortalShare: (
+    shareData: Omit<ClientPortalShare, 'id' | 'createdAt' | 'status' | 'accessCount' | 'shareUrl'>
+  ) => ClientPortalShare;
+  revokePortalShare: (shareId: string) => void;
+  extendPortalShare: (shareId: string, additionalHours: number) => void;
+
   // Upload Modal State
   isUploadModalOpen: boolean;
   uploadModalMatterId?: string;
   uploadModalFolder?: string;
   openUploadModal: (matterId?: string, folder?: string) => void;
   closeUploadModal: () => void;
+
+  // Recent & Favorites Navigation & Bookmarking
+  favoriteDocIds: string[];
+  favoriteFolders: string[];
+  toggleFavoriteDoc: (docId: string) => void;
+  toggleFavoriteFolder: (folderName: string) => void;
+  recentItems: Array<{
+    id: string;
+    name: string;
+    type: 'file' | 'folder';
+    timestamp: string;
+    ext?: string;
+    fileSize?: string;
+  }>;
+  recordRecentItem: (item: {
+    id: string;
+    name: string;
+    type: 'file' | 'folder';
+    ext?: string;
+    fileSize?: string;
+  }) => void;
+
+  // Vault Selection & Version History Sidebar
+  selectedVaultFolder: string;
+  setSelectedVaultFolder: (folder: string) => void;
+  selectedVaultDocId: string | null;
+  setSelectedVaultDocId: (docId: string | null) => void;
+  activeVersionSidebarDoc: VaultDocument | null;
+  setActiveVersionSidebarDoc: (doc: VaultDocument | null) => void;
+
+  // Custom Color-Coded Document Tags & Batch Operations
+  customTags: CustomDocumentTag[];
+  addCustomTag: (tag: Omit<CustomDocumentTag, 'id'>) => CustomDocumentTag;
+  updateCustomTag: (id: string, updates: Partial<CustomDocumentTag>) => void;
+  deleteCustomTag: (id: string) => void;
+  bulkTagDocuments: (docIds: string[], tagsToAdd: string[], tagsToRemove?: string[]) => void;
+  selectedTagFilter: string | null;
+  setSelectedTagFilter: (tag: string | null) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -438,6 +504,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Views & Routing State
   const [currentView, setCurrentView] = useState<MainNavView>('dashboard');
+  const [adminTab, setAdminTab] = useState<'matrix' | 'users' | 'simulator' | 'audit'>('matrix');
   const [activeMatterId, setActiveMatterId] = useState<string | null>('mat-1');
   const [matterSubTab, setMatterSubTab] = useState<MatterSubTab>('overview');
 
@@ -456,6 +523,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [tasks, setTasks] = useState<MatterTask[]>(INITIAL_TASKS);
   const [parties, setParties] = useState<MatterParty[]>(INITIAL_PARTIES);
   const [auditLog, setAuditLog] = useState<AuditEvent[]>(INITIAL_AUDIT_LOG);
+  const [legalTemplates, setLegalTemplates] = useState<AILegalTemplate[]>(INITIAL_LEGAL_TEMPLATES);
+  const [clientPortalShares, setClientPortalShares] = useState<ClientPortalShare[]>(INITIAL_PORTAL_SHARES);
 
   // Live Timer State
   const [isTimerRunning, setIsTimerRunning] = useState(false);
@@ -933,10 +1002,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkMoveDocuments = (docIds: string[], targetFolder: string) => {
     const idSet = new Set(docIds);
+    const now = new Date().toISOString();
     setDocuments((prev) =>
       prev.map((doc) => {
         if (idSet.has(doc.id)) {
-          return { ...doc, folder: targetFolder as any };
+          const moveAct: DocumentActivityEvent = {
+            id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            action: 'file_moved',
+            label: 'File moved',
+            details: `Moved from "${doc.folder}" to "${targetFolder}"`,
+            userName: currentUser.name,
+            userRole: currentUser.role,
+            timestamp: now,
+            metadata: { fromFolder: doc.folder, toFolder: targetFolder },
+          };
+          return {
+            ...doc,
+            folder: targetFolder as any,
+            activityLog: [moveAct, ...(doc.activityLog || [])],
+          };
         }
         return doc;
       })
@@ -1027,6 +1111,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       hash: 'sha256:' + Math.random().toString(36).substring(2, 12),
     };
 
+    const verEvent: DocumentActivityEvent = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      action: 'version_created',
+      label: `New version ${nextVer} published`,
+      details: versionData.notes || `Published new version iteration ${nextVer}`,
+      userName: currentUser.name,
+      userRole: currentUser.role,
+      timestamp: new Date().toISOString(),
+      metadata: { versionNumber: nextVer },
+    };
+
     setDocuments((prev) =>
       prev.map((d) => {
         if (d.id === docId) {
@@ -1038,6 +1133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ocrExtractedText: versionData.ocrExtractedText || d.ocrExtractedText,
             summary: versionData.summary || d.summary,
             versions: [newVersionObj, ...(d.versions || [])],
+            activityLog: [verEvent, ...(d.activityLog || [])],
           };
         }
         return d;
@@ -1090,6 +1186,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       hash: targetVer.hash,
     };
 
+    const revertEvent: DocumentActivityEvent = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      action: 'version_restored',
+      label: 'Version restored',
+      details: `Restored to ${targetVersionNumber} (as ${nextVerNumber})${reason ? `: ${reason}` : ''}`,
+      userName: currentUser.name,
+      userRole: currentUser.role,
+      timestamp: new Date().toISOString(),
+      metadata: { targetVersionNumber, nextVerNumber, reason },
+    };
+
     setDocuments((prev) =>
       prev.map((d) => {
         if (d.id === docId) {
@@ -1100,6 +1207,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             fileName: targetVer.fileName || d.fileName,
             ocrExtractedText: targetVer.snapshotContent || d.ocrExtractedText,
             versions: [revertVersionObj, ...(d.versions || [])],
+            activityLog: [revertEvent, ...(d.activityLog || [])],
           };
         }
         return d;
@@ -1120,9 +1228,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleEthicalWall = (ruleId: string) => {
+    let targetRule: EthicalWallRule | undefined;
     setEthicalWalls((prev) =>
-      prev.map((w) => (w.id === ruleId ? { ...w, active: !w.active } : w))
+      prev.map((w) => {
+        if (w.id === ruleId) {
+          const next = { ...w, active: !w.active };
+          targetRule = next;
+          return next;
+        }
+        return w;
+      })
     );
+    if (targetRule) {
+      logAudit(
+        'ETHICAL_WALL_MODIFIED',
+        'System',
+        ruleId,
+        `Ethical wall screening rule ${ruleId} for ${targetRule.userName} on Matter ${targetRule.matterNumber} was ${
+          targetRule.active ? 'ACTIVATED (Screen Enforced)' : 'DEACTIVATED (Screen Lifted)'
+        } by ${currentUser.name}. Reason: ${targetRule.reason}`,
+        targetRule.matterId,
+        targetRule.matterNumber
+      );
+    }
   };
 
   const addEthicalWall = (ruleData: Omit<EthicalWallRule, 'id'>) => {
@@ -1135,10 +1263,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'ETHICAL_WALL_BLOCKED',
       'System',
       newRule.id,
-      `Ethical screen erected isolating ${newRule.userName} from Matter ${newRule.matterNumber}`,
+      `Ethical screen erected isolating ${newRule.userName} from Matter ${newRule.matterNumber}. Policy: ${newRule.reason}`,
       newRule.matterId,
       newRule.matterNumber
     );
+  };
+
+  const removeEthicalWall = (ruleId: string) => {
+    const rule = ethicalWalls.find((w) => w.id === ruleId);
+    setEthicalWalls((prev) => prev.filter((w) => w.id !== ruleId));
+    if (rule) {
+      logAudit(
+        'ETHICAL_WALL_MODIFIED',
+        'System',
+        ruleId,
+        `Ethical wall screen rule ${ruleId} for ${rule.userName} on Matter ${rule.matterNumber} was PERMANENTLY REMOVED by ${currentUser.name}.`,
+        rule.matterId,
+        rule.matterNumber
+      );
+    }
   };
 
   const createLegalHold = (
@@ -1286,6 +1429,405 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimerNarrative('');
   };
 
+  // Legal Templates Actions
+  const addLegalTemplate = (templateData: Omit<AILegalTemplate, 'id' | 'lastUpdated'>): AILegalTemplate => {
+    const newTmpl: AILegalTemplate = {
+      ...templateData,
+      id: `tmpl-${Date.now()}`,
+      lastUpdated: new Date().toISOString().slice(0, 10),
+    };
+    setLegalTemplates((prev) => [newTmpl, ...prev]);
+    logAudit(
+      'AI_DRAFT_REQUESTED',
+      'AI',
+      newTmpl.id,
+      `Firm legal drafting template "${newTmpl.title}" (${newTmpl.category}) added to library by ${currentUser.name}.`
+    );
+    return newTmpl;
+  };
+
+  const updateLegalTemplate = (templateId: string, updates: Partial<AILegalTemplate>) => {
+    setLegalTemplates((prev) =>
+      prev.map((t) =>
+        t.id === templateId
+          ? { ...t, ...updates, lastUpdated: new Date().toISOString().slice(0, 10) }
+          : t
+      )
+    );
+  };
+
+  const deleteLegalTemplate = (templateId: string) => {
+    setLegalTemplates((prev) => prev.filter((t) => t.id !== templateId));
+  };
+
+  // Client Portal Access Actions
+  const createPortalShare = (
+    shareData: Omit<ClientPortalShare, 'id' | 'createdAt' | 'status' | 'accessCount' | 'shareUrl'>
+  ): ClientPortalShare => {
+    const shareId = `share-${Date.now()}`;
+    const token = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const shareUrl = `https://vault.alphacounsel.law/portal/s/${shareData.matterNumber}-${token}`;
+    const newShare: ClientPortalShare = {
+      ...shareData,
+      id: shareId,
+      createdAt: new Date().toISOString(),
+      status: 'ACTIVE',
+      accessCount: 0,
+      shareUrl,
+    };
+
+    setClientPortalShares((prev) => [newShare, ...prev]);
+
+    logAudit(
+      'DOCUMENT_VIEWED',
+      'Document',
+      newShare.documentIds.join(','),
+      `Client Portal access granted: ${newShare.documentTitles.join(', ')} shared with ${newShare.recipientContactName} (${newShare.recipientEmail}). Valid for ${newShare.durationHours}h. Watermark: ${newShare.watermarkEnabled ? 'ENFORCED' : 'OFF'}. PIN: ${newShare.pinProtected ? 'ENABLED' : 'NONE'}.`,
+      newShare.matterId,
+      newShare.matterNumber
+    );
+
+    return newShare;
+  };
+
+  const revokePortalShare = (shareId: string) => {
+    let targetShare: ClientPortalShare | undefined;
+    setClientPortalShares((prev) =>
+      prev.map((s) => {
+        if (s.id === shareId) {
+          targetShare = { ...s, status: 'REVOKED' };
+          return targetShare;
+        }
+        return s;
+      })
+    );
+
+    if (targetShare) {
+      logAudit(
+        'SECURITY_ALERT',
+        'Document',
+        targetShare.documentIds.join(','),
+        `Client Portal share link for ${targetShare.recipientContactName} (${targetShare.recipientEmail}) was REVOKED by ${currentUser.name}. Access immediately terminated.`,
+        targetShare.matterId,
+        targetShare.matterNumber
+      );
+    }
+  };
+
+  const extendPortalShare = (shareId: string, additionalHours: number) => {
+    let targetShare: ClientPortalShare | undefined;
+    setClientPortalShares((prev) =>
+      prev.map((s) => {
+        if (s.id === shareId) {
+          const currentExpiry = new Date(s.expiresAt).getTime();
+          const baseTime = currentExpiry > Date.now() ? currentExpiry : Date.now();
+          const newExpiresAt = new Date(baseTime + additionalHours * 60 * 60 * 1000).toISOString();
+          targetShare = {
+            ...s,
+            status: 'ACTIVE',
+            expiresAt: newExpiresAt,
+            durationHours: s.durationHours + additionalHours,
+          };
+          return targetShare;
+        }
+        return s;
+      })
+    );
+
+    if (targetShare) {
+      logAudit(
+        'DOCUMENT_VIEWED',
+        'Document',
+        targetShare.documentIds.join(','),
+        `Client Portal share link for ${targetShare.recipientContactName} extended by ${additionalHours} hours by ${currentUser.name}. New expiry: ${new Date(targetShare.expiresAt).toUTCString()}.`,
+        targetShare.matterId,
+        targetShare.matterNumber
+      );
+    }
+  };
+
+  // Recent & Favorites Navigation State
+  const [favoriteDocIds, setFavoriteDocIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('counsel_favorite_docs');
+      return saved ? JSON.parse(saved) : ['doc-1', 'doc-3'];
+    } catch {
+      return ['doc-1', 'doc-3'];
+    }
+  });
+
+  const [favoriteFolders, setFavoriteFolders] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('counsel_favorite_folders');
+      return saved ? JSON.parse(saved) : ['Contracts', 'Drafts'];
+    } catch {
+      return ['Contracts', 'Drafts'];
+    }
+  });
+
+  const toggleFavoriteDoc = (docId: string) => {
+    setFavoriteDocIds((prev) => {
+      const next = prev.includes(docId) ? prev.filter((id) => id !== docId) : [...prev, docId];
+      try {
+        localStorage.setItem('counsel_favorite_docs', JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+    // Also sync the isFavorite flag in documents array
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === docId ? { ...d, isFavorite: !d.isFavorite } : d))
+    );
+  };
+
+  const toggleFavoriteFolder = (folderName: string) => {
+    setFavoriteFolders((prev) => {
+      const next = prev.includes(folderName)
+        ? prev.filter((f) => f !== folderName)
+        : [...prev, folderName];
+      try {
+        localStorage.setItem('counsel_favorite_folders', JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  // Recent Access Tracking
+  const [recentItems, setRecentItems] = useState<
+    Array<{
+      id: string;
+      name: string;
+      type: 'file' | 'folder';
+      timestamp: string;
+      ext?: string;
+      fileSize?: string;
+    }>
+  >(() => {
+    try {
+      const saved = localStorage.getItem('counsel_recent_items');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // fallback
+    }
+    return [
+      {
+        id: 'doc-1',
+        name: 'Master Services Agreement (TechCorp)',
+        type: 'file',
+        timestamp: '10m ago',
+        ext: 'pdf',
+        fileSize: '3.4 MB',
+      },
+      {
+        id: 'doc-2',
+        name: 'Patent Infringement Pleadings',
+        type: 'file',
+        timestamp: '1h ago',
+        ext: 'docx',
+        fileSize: '1.8 MB',
+      },
+      {
+        id: 'Contracts',
+        name: 'Contracts & Agreements',
+        type: 'folder',
+        timestamp: '3h ago',
+      },
+      {
+        id: 'doc-4',
+        name: 'Quarterly Board Audit Summary',
+        type: 'file',
+        timestamp: 'Yesterday',
+        ext: 'xlsx',
+        fileSize: '820 KB',
+      },
+    ];
+  });
+
+  const recordRecentItem = (item: {
+    id: string;
+    name: string;
+    type: 'file' | 'folder';
+    ext?: string;
+    fileSize?: string;
+  }) => {
+    setRecentItems((prev) => {
+      const filtered = prev.filter((i) => i.id !== item.id);
+      const next = [
+        {
+          ...item,
+          timestamp: 'Just now',
+        },
+        ...filtered,
+      ].slice(0, 12);
+      try {
+        localStorage.setItem('counsel_recent_items', JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  // Vault Selection & Version Sidebar State
+  const [selectedVaultFolder, setSelectedVaultFolder] = useState<string>('ALL');
+  const [selectedVaultDocId, setSelectedVaultDocId] = useState<string | null>(null);
+  const [activeVersionSidebarDoc, setActiveVersionSidebarDoc] = useState<VaultDocument | null>(null);
+
+  // Custom Color-Coded Document Tags State
+  const [customTags, setCustomTags] = useState<CustomDocumentTag[]>(() => {
+    try {
+      const saved = localStorage.getItem('counsel_custom_tags');
+      return saved ? JSON.parse(saved) : INITIAL_CUSTOM_TAGS;
+    } catch {
+      return INITIAL_CUSTOM_TAGS;
+    }
+  });
+
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
+
+  const addCustomTag = (tagData: Omit<CustomDocumentTag, 'id'>): CustomDocumentTag => {
+    const newTag: CustomDocumentTag = {
+      ...tagData,
+      id: 'tag-' + Date.now(),
+      createdAt: new Date().toISOString(),
+    };
+    setCustomTags((prev) => {
+      const next = [...prev, newTag];
+      try {
+        localStorage.setItem('counsel_custom_tags', JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+    return newTag;
+  };
+
+  const updateCustomTag = (tagId: string, updates: Partial<CustomDocumentTag>) => {
+    setCustomTags((prev) => {
+      const next = prev.map((t) => (t.id === tagId ? { ...t, ...updates } : t));
+      try {
+        localStorage.setItem('counsel_custom_tags', JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  const deleteCustomTag = (tagId: string) => {
+    setCustomTags((prev) => {
+      const next = prev.filter((t) => t.id !== tagId);
+      try {
+        localStorage.setItem('counsel_custom_tags', JSON.stringify(next));
+      } catch (e) {
+        console.error(e);
+      }
+      return next;
+    });
+  };
+
+  // Bulk tag multiple documents simultaneously
+  const bulkTagDocuments = (
+    docIds: string[],
+    tagsToAdd: string[],
+    tagsToRemove: string[] = []
+  ) => {
+    const targetSet = new Set(docIds);
+    const removeSet = new Set(tagsToRemove.map((t) => t.toLowerCase()));
+    const now = new Date().toISOString();
+
+    setDocuments((prev) =>
+      prev.map((doc) => {
+        if (!targetSet.has(doc.id)) return doc;
+
+        const currentFiltered = (doc.tags || []).filter(
+          (t) => !removeSet.has(t.toLowerCase())
+        );
+
+        const updatedTags = Array.from(new Set([...currentFiltered, ...tagsToAdd]));
+
+        const tagEvent: DocumentActivityEvent = {
+          id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          action: 'tagged',
+          label: tagsToAdd.length > 0 ? `Tagged as ${tagsToAdd.join(', ')}` : 'Tags updated',
+          details: `Applied labels: [${tagsToAdd.join(', ')}]${tagsToRemove.length > 0 ? `, removed [${tagsToRemove.join(', ')}]` : ''}`,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          timestamp: now,
+          metadata: { added: tagsToAdd, removed: tagsToRemove },
+        };
+
+        return {
+          ...doc,
+          tags: updatedTags,
+          activityLog: [tagEvent, ...(doc.activityLog || [])],
+        };
+      })
+    );
+
+    logAudit(
+      'DOCUMENT_MODIFIED',
+      'Document',
+      docIds.join(','),
+      `Bulk updated tags across ${docIds.length} document(s). Added: [${tagsToAdd.join(', ')}]. Removed: [${tagsToRemove.join(', ')}] by ${currentUser.name}`
+    );
+  };
+
+  // Run Optical Character Recognition (OCR) on a document to extract and index text
+  const runDocumentOCR = async (docId: string): Promise<OCRResult> => {
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc) throw new Error('Document not found in vault');
+
+    const result = await ocrService.reindexDocumentOCR(doc);
+    const now = new Date().toISOString();
+
+    const ocrEvent: DocumentActivityEvent = {
+      id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      action: 'ocr_extracted',
+      label: 'OCR text extracted & indexed',
+      details: `Optical Character Recognition extracted ${result.characterCount} characters (${result.wordCount} words) with ${result.confidenceScore}% confidence. Full-text search index updated.`,
+      userName: currentUser.name || 'DocuVault OCR Engine',
+      userRole: currentUser.role || 'System',
+      timestamp: now,
+      metadata: {
+        confidenceScore: result.confidenceScore,
+        characterCount: result.characterCount,
+        wordCount: result.wordCount,
+        durationMs: result.processingDurationMs,
+      },
+    };
+
+    setDocuments((prev) =>
+      prev.map((d) => {
+        if (d.id === docId) {
+          return {
+            ...d,
+            ocrExtractedText: result.text,
+            ocrConfidence: result.confidenceScore,
+            ocrCharacterCount: result.characterCount,
+            ocrWordCount: result.wordCount,
+            ocrIndexedAt: result.scannedAt,
+            activityLog: [ocrEvent, ...(d.activityLog || [])],
+          };
+        }
+        return d;
+      })
+    );
+
+    logAudit(
+      'DOCUMENT_MODIFIED',
+      'Document',
+      doc.id,
+      `OCR extraction executed on "${doc.title}": ${result.characterCount} characters indexed with ${result.confidenceScore}% optical confidence by ${currentUser.name}.`
+    );
+
+    return result;
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -1321,6 +1863,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         currentView,
         setCurrentView,
+        adminTab,
+        setAdminTab,
         activeMatterId,
         setActiveMatterId,
         matterSubTab,
@@ -1375,8 +1919,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkCopyDocuments,
         addDocumentVersion,
         revertDocumentVersion,
+        runDocumentOCR,
         toggleEthicalWall,
         addEthicalWall,
+        removeEthicalWall,
         createLegalHold,
         requestReleaseLegalHold,
         approveLegalHoldRelease,
@@ -1384,11 +1930,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addChronology,
         logAudit,
 
+        // Templates & Portal Shares
+        legalTemplates,
+        addLegalTemplate,
+        updateLegalTemplate,
+        deleteLegalTemplate,
+        clientPortalShares,
+        createPortalShare,
+        revokePortalShare,
+        extendPortalShare,
+
         isUploadModalOpen,
         uploadModalMatterId,
         uploadModalFolder,
         openUploadModal,
         closeUploadModal,
+
+        // Recent & Favorites Navigation
+        favoriteDocIds,
+        favoriteFolders,
+        toggleFavoriteDoc,
+        toggleFavoriteFolder,
+        recentItems,
+        recordRecentItem,
+
+        selectedVaultFolder,
+        setSelectedVaultFolder,
+        selectedVaultDocId,
+        setSelectedVaultDocId,
+        activeVersionSidebarDoc,
+        setActiveVersionSidebarDoc,
+
+        // Custom Color-Coded Document Tags & Batch Operations
+        customTags,
+        addCustomTag,
+        updateCustomTag,
+        deleteCustomTag,
+        bulkTagDocuments,
+        selectedTagFilter,
+        setSelectedTagFilter,
       }}
     >
       {children}

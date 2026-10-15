@@ -7,6 +7,7 @@ import {
   X,
   CheckSquare,
   ShieldAlert,
+  Tag as TagIcon,
 } from 'lucide-react';
 
 interface VaultFloatingActionBarProps {
@@ -21,6 +22,7 @@ interface VaultFloatingActionBarProps {
   onCopy: () => void;
   onDelete: () => void;
   onAutoTag: () => void;
+  onTag?: () => void;
 }
 
 export const VaultFloatingActionBar: React.FC<VaultFloatingActionBarProps> = ({
@@ -35,6 +37,7 @@ export const VaultFloatingActionBar: React.FC<VaultFloatingActionBarProps> = ({
   onCopy,
   onDelete,
   onAutoTag,
+  onTag,
 }) => {
   if (selectedCount === 0) return null;
 
@@ -122,6 +125,19 @@ export const VaultFloatingActionBar: React.FC<VaultFloatingActionBarProps> = ({
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             <span>ML Auto-Tag</span>
           </button>
+
+          {/* Custom Color-Coded Tag Button */}
+          {onTag && (
+            <button
+              type="button"
+              onClick={onTag}
+              title="Add or update custom color-coded labels"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white shadow-xs transition-all"
+            >
+              <TagIcon className="w-3.5 h-3.5" />
+              <span>Tag Files</span>
+            </button>
+          )}
 
           {/* Delete Button */}
           <button

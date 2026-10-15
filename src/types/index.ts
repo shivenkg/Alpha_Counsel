@@ -239,6 +239,27 @@ export interface FolderThumbnailSlot {
   fileSize?: string;
 }
 
+export type TagColor =
+  | 'emerald'
+  | 'amber'
+  | 'rose'
+  | 'blue'
+  | 'purple'
+  | 'indigo'
+  | 'teal'
+  | 'cyan'
+  | 'pink'
+  | 'slate'
+  | 'orange';
+
+export interface CustomDocumentTag {
+  id: string;
+  name: string;
+  color: TagColor;
+  description?: string;
+  createdAt?: string;
+}
+
 export interface LegalTagSuggestion {
   tag: string;
   confidence: number; // 0.0 to 1.0 (e.g. 0.95 = 95%)
@@ -265,25 +286,90 @@ export interface FolderThumbnailPreview {
   slots: Array<FolderThumbnailSlot | null>; // 4 slots for 2x2 grid
 }
 
+export interface DocumentFolder {
+  id: string;
+  name: string;
+  description?: string;
+  fileTypes?: string[];
+  keywords?: string[];
+  fileCount: number;
+  isFavorite?: boolean;
+  color?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface DocumentCollaborator {
+  id: string;
+  name: string;
+  email: string;
+  role: 'owner' | 'can_edit' | 'can_view' | 'can_comment';
+  avatar?: string;
+  avatarColor?: string;
+  isOwner?: boolean;
+}
+
+export interface DocumentActivityEvent {
+  id: string;
+  action:
+    | 'file_moved'
+    | 'tagged'
+    | 'version_restored'
+    | 'version_created'
+    | 'ocr_extracted'
+    | 'uploaded'
+    | 'downloaded'
+    | 'viewed'
+    | 'renamed'
+    | (string & {});
+  label: string; // e.g. "File moved", "Tagged as Urgent", "Version restored"
+  details: string; // e.g. "Moved to folder 'Contracts'", "Added #Urgent label", "Restored version v1.0"
+  userName: string;
+  userRole?: string;
+  timestamp: string; // ISO string
+  metadata?: Record<string, any>;
+}
+
+export interface OCRResult {
+  text: string;
+  characterCount: number;
+  wordCount: number;
+  confidenceScore: number;
+  language: string;
+  indexedTokens: string[];
+  processingDurationMs: number;
+  scannedAt: string;
+}
+
 export interface VaultDocument {
   id: string;
-  matterId: string;
-  folder: 'Pleadings' | 'Discovery' | 'Correspondence' | 'Contracts' | 'Exhibits' | 'Drafts' | (string & {});
+  matterId?: string;
+  folder: string;
   title: string;
   fileName: string;
-  fileType: 'pdf' | 'docx' | 'xlsx' | 'txt';
+  fileType: 'pdf' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'ppt' | 'pptx' | 'img' | 'txt' | (string & {});
   fileSize: string;
   createdAt: string;
   createdBy: string;
   currentVersion: string;
   versions: DocumentVersion[];
-  isHeld: boolean; // Subject to legal hold (destructive operations blocked)
+  isHeld?: boolean;
   legalHoldId?: string;
   ocrExtractedText?: string;
+  ocrConfidence?: number;
+  ocrCharacterCount?: number;
+  ocrWordCount?: number;
+  ocrIndexedAt?: string;
+  activityLog?: DocumentActivityEvent[];
   tags: string[];
-  confidentialityLevel: 'Public' | 'Firm Confidential' | 'Highly Confidential - Attorneys Eyes Only';
+  confidentialityLevel?: 'Public' | 'Firm Confidential' | 'Highly Confidential - Attorneys Eyes Only' | (string & {});
   summary?: string;
   aiSummary?: DocumentSummaryResult;
+  isFavorite?: boolean;
+  lastAccessedAt?: string;
+  collaborators?: DocumentCollaborator[];
+  shareUrl?: string;
+  sharedWithPublic?: boolean;
 }
 
 export interface LegalHold {
@@ -512,6 +598,9 @@ export type AuditActionType =
   | 'MATTER_ACCESS_GRANTED'
   | 'ETHICAL_WALL_DENIED'
   | 'ETHICAL_WALL_BLOCKED'
+  | 'ETHICAL_WALL_MODIFIED'
+  | 'ETHICAL_WALL_CREATED'
+  | 'SECURITY_ALERT'
   | 'CONFLICT_CHECK_RUN'
   | 'LEGAL_HOLD_CREATED'
   | 'LEGAL_HOLD_PRESERVATION_FROZEN'
@@ -611,4 +700,67 @@ export interface AIDraftResult {
   generatedAt: string;
   tokenCount: number;
   watermark: boolean;
+}
+
+export interface AILegalTemplate {
+  id: string;
+  title: string;
+  category:
+    | 'Commercial Litigation'
+    | 'Intellectual Property'
+    | 'Corporate & M&A'
+    | 'Employment & Labor'
+    | 'Arbitration & MCIA'
+    | 'Governance & Trust'
+    | 'General Practice';
+  documentType:
+    | 'Motion for Summary Judgment'
+    | 'Non-Disclosure Agreement'
+    | 'Demand Letter'
+    | 'Engagement Letter'
+    | 'Client Legal Opinion'
+    | 'Notice of Deposition'
+    | 'Emergency Motion for TRO'
+    | 'Statement of Claim'
+    | (string & {});
+  jurisdiction: string;
+  defaultClientPosition: string;
+  defaultKeyLegalArguments: string;
+  description: string;
+  suggestedEvidenceTypes: string[];
+  firmApprovalStatus: 'FIRM_STANDARD' | 'MANAGING_PARTNER_APPROVED' | 'PRACTICE_GROUP' | 'CUSTOM';
+  approvalSignoff: string;
+  version: string;
+  statutoryCitations: string[];
+  mandatoryClauses: string[];
+  tags: string[];
+  author: string;
+  lastUpdated: string;
+}
+
+export interface ClientPortalShare {
+  id: string;
+  matterId: string;
+  matterNumber: string;
+  documentIds: string[];
+  documentTitles: string[];
+  recipientContactName: string;
+  recipientEmail: string;
+  recipientCompany?: string;
+  clientId?: string;
+  createdAt: string;
+  createdBy: string;
+  expiresAt: string;
+  durationHours: number;
+  accessCount: number;
+  maxAccessLimit?: number;
+  permissionScope: 'VIEW_DOWNLOAD_WATERMARKED' | 'VIEW_ONLY' | 'COMMENT_APPROVAL';
+  watermarkEnabled: boolean;
+  pinProtected: boolean;
+  accessPin?: string;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+  shareUrl: string;
+  notes?: string;
+  lastAccessedAt?: string;
+  lastAccessedIp?: string;
 }

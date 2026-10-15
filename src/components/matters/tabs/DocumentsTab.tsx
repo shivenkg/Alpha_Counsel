@@ -21,6 +21,7 @@ import {
 import { useApp } from '../../../context/AppContext';
 import { Matter, VaultDocument } from '../../../types';
 import { VaultDropzone } from '../../vault/VaultDropzone';
+import { ClientPortalAccess } from '../../portal/ClientPortalAccess';
 
 interface Props {
   matter: Matter;
@@ -45,6 +46,8 @@ export const DocumentsTab: React.FC<Props> = ({ matter }) => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadMode, setUploadMode] = useState<'dropzone' | 'manual'>('dropzone');
   const [shareLinkInfo, setShareLinkInfo] = useState<{ docTitle: string; url: string } | null>(null);
+  const [showClientPortalModal, setShowClientPortalModal] = useState(false);
+  const [selectedShareDocId, setSelectedShareDocId] = useState<string | undefined>(undefined);
 
   // Upload Form
   const [title, setTitle] = useState('');
@@ -104,18 +107,13 @@ export const DocumentsTab: React.FC<Props> = ({ matter }) => {
     );
   };
 
+  const handleOpenShareModal = (doc?: VaultDocument) => {
+    setSelectedShareDocId(doc?.id);
+    setShowClientPortalModal(true);
+  };
+
   const handleCreateShareLink = (doc: VaultDocument) => {
-    const token = Math.random().toString(36).substring(2, 10);
-    const link = `https://vault.alphacounsel.law/s/${matter.matterNumber}/${doc.id}?exp=72h&auth=${token}`;
-    setShareLinkInfo({ docTitle: doc.title, url: link });
-    logAudit(
-      'DOCUMENT_VIEWED',
-      'Document',
-      doc.id,
-      `Expiring share link generated (72hr validity) for "${doc.title}".`,
-      matter.id,
-      matter.matterNumber
-    );
+    handleOpenShareModal(doc);
   };
 
   return (
@@ -149,9 +147,22 @@ export const DocumentsTab: React.FC<Props> = ({ matter }) => {
               <span>Legal Hold Active: Destructive operations blocked</span>
             </div>
           )}
+
+          <button
+            onClick={() => handleOpenShareModal()}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer shadow-xs ${
+              isDark
+                ? 'bg-amber-950/30 border-amber-800/60 text-amber-300 hover:bg-amber-950/60'
+                : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+            }`}
+          >
+            <Share2 className="w-3.5 h-3.5 text-amber-500" />
+            <span>Secure Client Share</span>
+          </button>
+
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded transition-colors shadow"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-xl transition-colors shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Upload Document</span>
@@ -821,6 +832,26 @@ export const DocumentsTab: React.FC<Props> = ({ matter }) => {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Secure Client Portal Access Modal */}
+      {showClientPortalModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div
+            className={`border rounded-2xl max-w-4xl w-full p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto relative ${
+              isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+            }`}
+          >
+            <ClientPortalAccess
+              matter={matter}
+              preselectedDocId={selectedShareDocId}
+              onClose={() => {
+                setShowClientPortalModal(false);
+                setSelectedShareDocId(undefined);
+              }}
+            />
           </div>
         </div>
       )}

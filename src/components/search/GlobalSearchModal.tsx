@@ -117,10 +117,14 @@ export const GlobalSearchModal: React.FC = () => {
     setCurrentView('matters');
   };
 
-  const handleSelectDoc = (docMatterId: string) => {
-    setActiveMatterId(docMatterId);
-    setMatterSubTab('documents');
-    setCurrentView('matters');
+  const handleSelectDoc = (docMatterId?: string) => {
+    if (docMatterId) {
+      setActiveMatterId(docMatterId);
+      setMatterSubTab('documents');
+      setCurrentView('matters');
+    } else {
+      setCurrentView('vault');
+    }
   };
 
   const totalHits =

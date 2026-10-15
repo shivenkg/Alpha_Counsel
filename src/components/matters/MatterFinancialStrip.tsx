@@ -126,30 +126,6 @@ export const MatterFinancialStrip: React.FC<Props> = ({ matter, showDetailsButto
           <div className={tileSubClass}>Billed − Paid</div>
         </div>
 
-        {/* Trust / Retainer */}
-        <div
-          onClick={() => setMatterSubTab('trust')}
-          className={`rounded-xl p-2.5 cursor-pointer transition-all shadow-xs ${
-            isBelowEvergreen
-              ? isDark
-                ? 'bg-slate-900 border border-rose-900/60 ring-1 ring-rose-900/40'
-                : 'bg-rose-50/50 border border-rose-200 ring-1 ring-rose-200'
-              : tileBaseClass
-          }`}
-        >
-          <div className={tileHeaderClass}>
-            Trust / Retainer
-          </div>
-          <div className={`text-sm font-bold font-num ${
-            isBelowEvergreen
-              ? isDark ? 'text-rose-400' : 'text-rose-600'
-              : isDark ? 'text-blue-400' : 'text-blue-600'
-          }`}>
-            {formatINR(snap.trustBalance)}
-          </div>
-          <div className={tileSubClass}>IOLTA Balance</div>
-        </div>
-
         {/* Realization Rate */}
         <div className={tileBaseClass}>
           <div className={tileHeaderClass}>

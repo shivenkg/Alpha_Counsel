@@ -41,11 +41,14 @@ import {
   Scale,
   ListFilter,
   CheckCircle2,
+  Activity,
+  Scan,
 } from 'lucide-react';
 import { VaultDocument, Matter, DocumentSummaryResult, DocumentVersion } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { useAudit } from '../../hooks/useAudit';
 import { generateDocumentSummary } from '../../services/aiService';
+import { DocumentActivityLog } from './DocumentActivityLog';
 
 interface FilePreviewModalProps {
   document: VaultDocument;
@@ -53,7 +56,7 @@ interface FilePreviewModalProps {
   onDownload: (doc: VaultDocument) => void;
 }
 
-type PreviewTab = 'canvas' | 'text' | 'summary' | 'metadata' | 'history';
+type PreviewTab = 'canvas' | 'text' | 'summary' | 'metadata' | 'history' | 'activity';
 
 export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   document: doc,
@@ -67,17 +70,27 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     updateDocument,
     addDocumentVersion,
     revertDocumentVersion,
+    runDocumentOCR,
+    documents,
   } = useApp();
   const { logDocumentAction, audit_events } = useAudit();
   const isDark = theme === 'dark';
 
+  // Live document instance synchronized with global context
+  const liveDoc = documents.find((d) => d.id === doc.id) || doc;
+
   const [activeTab, setActiveTab] = useState<PreviewTab>('canvas');
+  const [showActivitySidebar, setShowActivitySidebar] = useState<boolean>(true);
   const [activePage, setActivePage] = useState<number>(1);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [copiedText, setCopiedText] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSheetTab, setActiveSheetTab] = useState<string>('Summary');
+
+  // OCR Execution State
+  const [isOcrScanning, setIsOcrScanning] = useState<boolean>(false);
+  const [ocrSuccessToast, setOcrSuccessToast] = useState<string | null>(null);
 
   // AI Summary State
   const [summaryResult, setSummaryResult] = useState<DocumentSummaryResult | null>(
@@ -221,6 +234,22 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     setTimeout(() => setVersionSuccessMessage(null), 3500);
   };
 
+  const handleRunOcrInModal = async () => {
+    setIsOcrScanning(true);
+    try {
+      const res = await runDocumentOCR(liveDoc.id);
+      setOcrSuccessToast(
+        `OCR Completed: Extracted ${res.characterCount} characters with ${res.confidenceScore}% confidence`
+      );
+      setTimeout(() => setOcrSuccessToast(null), 3500);
+    } catch {
+      setOcrSuccessToast('OCR extraction failed. Check image format.');
+      setTimeout(() => setOcrSuccessToast(null), 3500);
+    } finally {
+      setIsOcrScanning(false);
+    }
+  };
+
   const getFileBadge = () => {
     const ext = (doc.fileName.split('.').pop() || doc.fileType || '').toLowerCase();
     if (ext === 'pdf') {
@@ -255,7 +284,11 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200">
       <div
         className={`w-full flex flex-col rounded-2xl md:rounded-3xl shadow-2xl border transition-all overflow-hidden ${
-          isFullscreen ? 'h-full max-w-full' : 'max-h-[92vh] max-w-5xl h-[880px]'
+          isFullscreen
+            ? 'h-full max-w-full'
+            : showActivitySidebar
+            ? 'max-h-[94vh] max-w-6xl h-[880px]'
+            : 'max-h-[92vh] max-w-5xl h-[880px]'
         } ${
           isDark
             ? 'bg-slate-900 border-slate-800 text-slate-100'
@@ -327,6 +360,33 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
           {/* Quick Toolbar Buttons */}
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Activity Log Sidebar Toggle */}
+            <button
+              onClick={() => setShowActivitySidebar((prev) => !prev)}
+              title={showActivitySidebar ? 'Hide Activity Log Sidebar' : 'Show Activity Log Sidebar'}
+              className={`p-2 sm:px-3 sm:py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+                showActivitySidebar
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-xs'
+                  : isDark
+                  ? 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-xs'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5 text-blue-400" />
+              <span className="hidden sm:inline">Activity Log</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  showActivitySidebar
+                    ? 'bg-blue-700 text-white'
+                    : isDark
+                    ? 'bg-slate-900 text-slate-300'
+                    : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                {(liveDoc.activityLog?.length || 0) + 1}
+              </span>
+            </button>
+
             <button
               onClick={() => {
                 setActiveTab('summary');
@@ -482,6 +542,26 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                 </span>
               )}
             </button>
+
+            <button
+              onClick={() => {
+                setActiveTab('activity');
+                setShowActivitySidebar(true);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                activeTab === 'activity'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : isDark
+                  ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Activity Log</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300">
+                {(liveDoc.activityLog?.length || 0) + 1}
+              </span>
+            </button>
           </div>
 
           {/* Canvas Controls: Zoom and Page Navigation */}
@@ -566,9 +646,10 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
 
         {/* MODAL MAIN CONTENT AREA */}
         <div className="flex-1 overflow-hidden flex relative">
-          {/* TAB 1: VISUAL CANVAS & THUMBNAILS */}
-          {activeTab === 'canvas' && (
-            <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 overflow-hidden flex flex-col min-w-0">
+            {/* TAB 1: VISUAL CANVAS & THUMBNAILS */}
+            {activeTab === 'canvas' && (
+              <div className="flex-1 flex overflow-hidden">
               {/* Left Thumbnails Rail */}
               <div
                 className={`w-44 border-r overflow-y-auto p-3 space-y-3 shrink-0 select-none hidden sm:block ${
@@ -943,41 +1024,107 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: EXTRACTED OCR & FULL TEXT */}
+          {/* TAB 2: EXTRACTED OCR & FULL-TEXT RECOGNITION */}
           {activeTab === 'text' && (
             <div className="flex-1 p-6 overflow-y-auto space-y-4">
+              {/* OCR Status & Action Header */}
               <div
-                className={`p-4 rounded-xl border flex items-center justify-between ${
+                className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                   isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
                 }`}
               >
-                <div>
-                  <h4
-                    className={`text-xs font-bold uppercase tracking-wider ${
-                      isDark ? 'text-slate-300' : 'text-slate-700'
-                    }`}
-                  >
-                    Forensic OCR & Full-Text Search Engine
-                  </h4>
-                  <p
-                    className={`text-xs mt-0.5 ${
-                      isDark ? 'text-slate-400' : 'text-slate-500'
-                    }`}
-                  >
-                    High-accuracy optical character recognition (OCR) indexed with UTBMS litigation
-                    coding.
-                  </p>
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center shrink-0">
+                    <Scan className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4
+                        className={`text-xs font-bold uppercase tracking-wider ${
+                          isDark ? 'text-slate-200' : 'text-slate-800'
+                        }`}
+                      >
+                        Optical Character Recognition (OCR) Engine
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                        {liveDoc.ocrConfidence || 99.4}% Confidence
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold">
+                        Full-Text Searchable
+                      </span>
+                    </div>
+                    <div className={`text-[11px] mt-1 flex items-center gap-3 flex-wrap ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <span>Indexed: {liveDoc.ocrCharacterCount || (liveDoc.ocrExtractedText ? liveDoc.ocrExtractedText.length : 428)} characters</span>
+                      <span>•</span>
+                      <span>{liveDoc.ocrWordCount || 52} words</span>
+                      <span>•</span>
+                      <span>Format: {liveDoc.fileType.toUpperCase()} Scanned Ingestion</span>
+                    </div>
+                  </div>
                 </div>
-                <button
-                  onClick={handleCopyText}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs"
-                >
-                  {copiedText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedText ? 'Copied' : 'Copy Full Text'}</span>
-                </button>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={handleRunOcrInModal}
+                    disabled={isOcrScanning}
+                    title="Re-run optical character extraction on this scanned file"
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isOcrScanning ? 'animate-spin' : ''}`} />
+                    <span>{isOcrScanning ? 'Scanning...' : 'Re-index OCR'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleCopyText}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all active:scale-95"
+                  >
+                    {copiedText ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedText ? 'Copied' : 'Copy Full Text'}</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Text Box */}
+              {/* OCR Scanning Toast */}
+              {ocrSuccessToast && (
+                <div className="p-3 rounded-xl text-xs bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-semibold">{ocrSuccessToast}</span>
+                </div>
+              )}
+
+              {/* In-transcript Search Bar & Match Counter */}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="relative flex-1 min-w-[240px]">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search inside extracted OCR transcript..."
+                    className={`w-full pl-9 pr-8 py-1.5 rounded-xl text-xs focus:outline-none transition-all border ${
+                      isDark
+                        ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500 focus:border-indigo-500'
+                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-indigo-600 shadow-2xs'
+                    }`}
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {searchQuery && (
+                  <span className="text-[11px] font-mono text-indigo-400 font-semibold px-2 py-1 rounded bg-indigo-500/10 border border-indigo-500/20">
+                    Matches highlighted in transcript below
+                  </span>
+                )}
+              </div>
+
+              {/* Extracted Text Viewer */}
               <div
                 className={`p-5 rounded-2xl border font-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto whitespace-pre-wrap select-text ${
                   isDark
@@ -985,15 +1132,15 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                     : 'bg-white border-slate-200 text-slate-800 shadow-inner'
                 }`}
               >
-                {doc.ocrExtractedText ? (
+                {liveDoc.ocrExtractedText ? (
                   searchQuery ? (
-                    doc.ocrExtractedText
+                    liveDoc.ocrExtractedText
                       .split(new RegExp(`(${searchQuery})`, 'gi'))
                       .map((part, i) =>
                         part.toLowerCase() === searchQuery.toLowerCase() ? (
                           <mark
                             key={i}
-                            className="bg-amber-400 text-slate-900 font-bold px-0.5 rounded"
+                            className="bg-amber-400 text-slate-900 font-bold px-0.5 rounded shadow-2xs"
                           >
                             {part}
                           </mark>
@@ -1002,10 +1149,10 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                         )
                       )
                   ) : (
-                    doc.ocrExtractedText
+                    liveDoc.ocrExtractedText
                   )
                 ) : (
-                  `DOCUMENT: ${doc.title}\nFILE NAME: ${doc.fileName}\nSIZE: ${doc.fileSize}\nMATTER: ${matter.matterNumber} - ${matter.title}\nCUSTODIAN: ${doc.createdBy}\nCONFIDENTIALITY: ${doc.confidentialityLevel || 'Privileged Work-Product'}\n\n[OCR INGESTION LOG]\n- Optical Character Recognition complete (99.4% confidence score)\n- Extracted text indexed into global search query vector database\n- Legal holds verification: Immutable record preservation active\n- Associated Matter: ${matter.matterNumber} (${matter.courtVenue || 'Federal Jurisdiction'})\n\nSUMMARY TEXT:\nThis document serves as an authentic pleading and evidentiary submission in support of Plaintiff's claims. Certified for production under Federal Rules of Civil Procedure 26(b) and 37.`
+                  `DOCUMENT: ${liveDoc.title}\nFILE NAME: ${liveDoc.fileName}\nSIZE: ${liveDoc.fileSize}\nMATTER: ${matter.matterNumber} - ${matter.title}\nCUSTODIAN: ${liveDoc.createdBy}\nCONFIDENTIALITY: ${liveDoc.confidentialityLevel || 'Privileged Work-Product'}\n\n[OCR INGESTION LOG]\n- Optical Character Recognition complete (99.4% confidence score)\n- Extracted text indexed into global search query vector database\n- Legal holds verification: Immutable record preservation active\n\nSUMMARY TEXT:\nThis document serves as an authentic pleading and evidentiary submission in support of Plaintiff's claims.`
                 )}
               </div>
             </div>
@@ -1863,6 +2010,24 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             </div>
           )}
         </div>
+
+        {/* DEDICATED ACTIVITY LOG COMPONENT WITHIN FILE DETAIL VIEW SIDEBAR */}
+        {showActivitySidebar && (
+          <aside
+            className={`w-80 md:w-96 border-l shrink-0 h-full flex flex-col overflow-hidden animate-in slide-in-from-right-3 duration-200 ${
+              isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'
+            }`}
+          >
+            <DocumentActivityLog
+              document={liveDoc}
+              onClose={() => setShowActivitySidebar(false)}
+              onRestoreVersion={(verNum) => {
+                revertDocumentVersion(liveDoc.id, verNum, `Restored iteration ${verNum}`);
+              }}
+            />
+          </aside>
+        )}
+      </div>
 
         {/* MODAL FOOTER */}
         <div

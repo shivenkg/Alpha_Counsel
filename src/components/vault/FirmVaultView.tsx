@@ -24,12 +24,14 @@ import {
   Search,
   Share2,
   ShieldCheck,
+  Star,
   Tag,
   Users,
   X,
   History,
   Sparkles,
   RotateCcw,
+  Check,
   CheckSquare,
   Square,
   MinusSquare,
@@ -38,6 +40,8 @@ import {
   Trash2,
   Tag as TagIcon,
   UploadCloud,
+  Activity,
+  Scan,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAudit } from '../../hooks/useAudit';
@@ -48,17 +52,20 @@ import {
   EncryptedFolderRecord,
   FolderThumbnailPreview,
   AutoTagAnalysisResult,
+  TagColor,
 } from '../../types';
 import { VaultDropzone } from './VaultDropzone';
 import { UploadProgressDrawer, UploadTask } from './UploadProgressDrawer';
 import { FilePreviewModal } from './FilePreviewModal';
-import { DocumentVersionModal } from './DocumentVersionModal';
+import { DocumentVersionSidebar } from './DocumentVersionSidebar';
 import { FolderGridThumbnail } from './FolderGridThumbnail';
 import { FolderContextMenu } from './FolderContextMenu';
 import { FolderCipherModal } from './FolderCipherModal';
 import { VaultFloatingActionBar } from './VaultFloatingActionBar';
 import { BulkMoveCopyModal } from './BulkMoveCopyModal';
 import { BulkDeleteModal } from './BulkDeleteModal';
+import { BulkTagModal } from './BulkTagModal';
+import { DocumentTagEditor } from './DocumentTagEditor';
 import { AutoTagReviewModal } from './AutoTagReviewModal';
 import { AIFolderStructureModal } from './AIFolderStructureModal';
 import { mockAES256EncryptionService } from '../../services/encryptionService';
@@ -67,6 +74,8 @@ import {
   backgroundThumbnailService,
   buildThumbnailData,
 } from '../../services/thumbnailService';
+import { getTagColorMeta, COLOR_OPTIONS } from '../../utils/tagColors';
+import { ocrService } from '../../services/ocrService';
 
 export const FirmVaultView: React.FC = () => {
   const {
@@ -86,14 +95,35 @@ export const FirmVaultView: React.FC = () => {
     closeUploadModal,
     isUploadModalOpen,
     uploadModalFolder,
+    favoriteDocIds,
+    favoriteFolders,
+    toggleFavoriteDoc,
+    toggleFavoriteFolder,
+    recentItems,
+    recordRecentItem,
+    selectedVaultFolder,
+    setSelectedVaultFolder,
+    selectedVaultDocId,
+    setSelectedVaultDocId,
+    activeVersionSidebarDoc,
+    setActiveVersionSidebarDoc,
+    customTags,
+    addCustomTag,
+    updateCustomTag,
+    deleteCustomTag,
+    bulkTagDocuments,
+    selectedTagFilter,
+    setSelectedTagFilter,
   } = useApp();
   const { logDocumentAction, logEvent } = useAudit();
   const isDark = theme === 'dark';
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedFolder, setSelectedFolder] = useState<string>('ALL');
+  const [ocrOnlyFilter, setOcrOnlyFilter] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState<string>(() => selectedVaultFolder || 'ALL');
   const [activePreviewDoc, setActivePreviewDoc] = useState<VaultDocument | null>(null);
   const [activeVersionDoc, setActiveVersionDoc] = useState<VaultDocument | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<'versions' | 'activity' | 'ocr'>('activity');
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
@@ -107,18 +137,54 @@ export const FirmVaultView: React.FC = () => {
   const [newFolderName, setNewFolderName] = useState('');
   const [folderList, setFolderList] = useState<string[]>([
     'ALL',
-    'Pleadings',
-    'Discovery',
     'Contracts',
-    'Exhibits',
+    'Finance & Reports',
+    'Product Specs',
+    'Marketing',
     'Drafts',
   ]);
+
+  // Synchronize with navigation sidebar Recent & Favorites triggers
+  useEffect(() => {
+    if (activeVersionSidebarDoc) {
+      setActiveVersionDoc(activeVersionSidebarDoc);
+    }
+  }, [activeVersionSidebarDoc]);
+
+  useEffect(() => {
+    if (selectedVaultFolder && selectedVaultFolder !== selectedFolder) {
+      setSelectedFolder(selectedVaultFolder);
+    }
+  }, [selectedVaultFolder]);
+
+  useEffect(() => {
+    if (selectedVaultDocId) {
+      setSelectedDocId(selectedVaultDocId);
+      const targetDoc = documents.find((d) => d.id === selectedVaultDocId);
+      if (targetDoc) {
+        setActiveVersionDoc(targetDoc);
+        recordRecentItem({
+          id: targetDoc.id,
+          name: targetDoc.title,
+          type: 'file',
+          ext: targetDoc.fileName.split('.').pop(),
+          fileSize: targetDoc.fileSize,
+        });
+      }
+    }
+  }, [selectedVaultDocId]);
 
   // Bulk Selection State
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [bulkMoveModalOpen, setBulkMoveModalOpen] = useState(false);
   const [bulkCopyModalOpen, setBulkCopyModalOpen] = useState(false);
   const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
+  const [bulkTagModalOpen, setBulkTagModalOpen] = useState(false);
+  const [editingDocTagsId, setEditingDocTagsId] = useState<string | null>(null);
+  const [lastSelectedDocIndex, setLastSelectedDocIndex] = useState<number | null>(null);
+  const [showNewTagPopover, setShowNewTagPopover] = useState(false);
+  const [newTagNameInput, setNewTagNameInput] = useState('');
+  const [newTagColorInput, setNewTagColorInput] = useState<TagColor>('purple');
 
   // AI Folder Structure Engine State
   const [aiFolderModalOpen, setAiFolderModalOpen] = useState(false);
@@ -156,8 +222,20 @@ export const FirmVaultView: React.FC = () => {
     return auth.isPermitted;
   });
 
+  const ocrMatchesCount = useMemo(() => {
+    if (!searchTerm.trim()) return 0;
+    const term = searchTerm.toLowerCase();
+    return permittedDocs.filter(
+      (d) => d.ocrExtractedText && d.ocrExtractedText.toLowerCase().includes(term)
+    ).length;
+  }, [permittedDocs, searchTerm]);
+
   const filteredDocs = permittedDocs.filter((doc) => {
     const term = searchTerm.toLowerCase();
+    if (ocrOnlyFilter) {
+      if (!doc.ocrExtractedText) return false;
+      if (term && !doc.ocrExtractedText.toLowerCase().includes(term)) return false;
+    }
     const matchesSearch =
       doc.title.toLowerCase().includes(term) ||
       doc.fileName.toLowerCase().includes(term) ||
@@ -167,7 +245,12 @@ export const FirmVaultView: React.FC = () => {
       selectedFolder === 'ALL' ||
       doc.folder === selectedFolder ||
       doc.folder.startsWith(`${selectedFolder}/`);
-    return matchesSearch && matchesFolder;
+    const matchesTag =
+      !selectedTagFilter ||
+      (doc.tags || []).some(
+        (t) => (t.startsWith('#') ? t.slice(1) : t).toLowerCase() === selectedTagFilter.toLowerCase()
+      );
+    return matchesSearch && matchesFolder && matchesTag;
   });
 
   // Handle Applying AI Proposed Folder Structure & Relocations
@@ -341,17 +424,37 @@ export const FirmVaultView: React.FC = () => {
     filteredDocs.length > 0 && filteredDocs.every((d) => selectedDocIds.has(d.id));
   const hasHeldSelectedDocs = selectedDocs.some((d) => d.isHeld);
 
-  const handleToggleSelectDoc = (docId: string, e?: React.SyntheticEvent) => {
-    if (e) e.stopPropagation();
+  const handleToggleSelectDoc = (
+    docId: string,
+    index?: number,
+    e?: React.SyntheticEvent
+  ) => {
+    if (e && 'stopPropagation' in e) e.stopPropagation();
+    const isShift = (e as React.MouseEvent)?.shiftKey;
+
     setSelectedDocIds((prev) => {
       const next = new Set(prev);
-      if (next.has(docId)) {
-        next.delete(docId);
+      if (isShift && index !== undefined && lastSelectedDocIndex !== null) {
+        const start = Math.min(lastSelectedDocIndex, index);
+        const end = Math.max(lastSelectedDocIndex, index);
+        for (let i = start; i <= end; i++) {
+          if (filteredDocs[i]) {
+            next.add(filteredDocs[i].id);
+          }
+        }
       } else {
-        next.add(docId);
+        if (next.has(docId)) {
+          next.delete(docId);
+        } else {
+          next.add(docId);
+        }
       }
       return next;
     });
+
+    if (index !== undefined) {
+      setLastSelectedDocIndex(index);
+    }
   };
 
   const handleSelectAllFiltered = () => {
@@ -360,6 +463,53 @@ export const FirmVaultView: React.FC = () => {
 
   const handleClearSelection = () => {
     setSelectedDocIds(new Set());
+    setLastSelectedDocIndex(null);
+  };
+
+  // Bulk Tag Execution
+  const handleExecuteBulkTag = (tagsToAdd: string[], tagsToRemove: string[]) => {
+    const ids = Array.from(selectedDocIds);
+    bulkTagDocuments(ids, tagsToAdd, tagsToRemove);
+    setSelectedDocIds(new Set());
+    setBulkTagModalOpen(false);
+    setAutoTagToast({
+      message: `Updated labels across ${ids.length} document(s). Added ${tagsToAdd.length}, removed ${tagsToRemove.length}.`,
+    });
+  };
+
+  // Top-level custom tag creation handler
+  const handleCreateTopLevelTag = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newTagNameInput.trim();
+    if (!trimmed) return;
+    addCustomTag({
+      name: trimmed,
+      color: newTagColorInput,
+    });
+    setNewTagNameInput('');
+    setShowNewTagPopover(false);
+    setAutoTagToast({
+      message: `Created new label "${trimmed}" with ${newTagColorInput} color styling.`,
+    });
+  };
+
+  // Single Document Tag Toggle
+  const handleToggleTagOnDoc = (docId: string, tagName: string) => {
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc) return;
+    const currentTags = doc.tags || [];
+    const clean = tagName.startsWith('#') ? tagName.slice(1) : tagName;
+    const hasTag = currentTags.some(
+      (t) => (t.startsWith('#') ? t.slice(1) : t).toLowerCase() === clean.toLowerCase()
+    );
+
+    const updatedTags = hasTag
+      ? currentTags.filter(
+          (t) => (t.startsWith('#') ? t.slice(1) : t).toLowerCase() !== clean.toLowerCase()
+        )
+      : [...currentTags, clean];
+
+    updateDocument(docId, { tags: updatedTags });
   };
 
   // Bulk Move Execution
@@ -502,30 +652,32 @@ export const FirmVaultView: React.FC = () => {
   };
 
   return (
-    <div
-      className={`flex-1 overflow-y-auto p-6 md:p-8 space-y-7 font-sans transition-colors duration-200 ${
-        isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
-      }`}
-    >
-      {/* Top Header: Counsel Repos */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div>
-            <h1
-              className={`text-2xl font-bold tracking-tight ${
-                isDark ? 'text-white' : 'text-slate-900'
-              }`}
-            >
-              Counsel Repos Vault
-            </h1>
-            <p
-              className={`text-xs mt-0.5 ${
-                isDark ? 'text-slate-400' : 'text-slate-500'
-              }`}
-            >
-              Enterprise document management with drag-and-drop ingestion, OCR indexing, and legal holds.
-            </p>
-          </div>
+    <div className="flex-1 flex overflow-hidden relative h-full">
+      {/* Primary Scrollable Vault Container */}
+      <div
+        className={`flex-1 overflow-y-auto p-6 md:p-8 space-y-7 font-sans transition-colors duration-200 ${
+          isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+        }`}
+      >
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div>
+              <h1
+                className={`text-2xl font-bold tracking-tight ${
+                  isDark ? 'text-white' : 'text-slate-900'
+                }`}
+              >
+                Document Vault
+              </h1>
+              <p
+                className={`text-xs mt-0.5 ${
+                  isDark ? 'text-slate-400' : 'text-slate-500'
+                }`}
+              >
+                Simple, minimalist and professional document management with version history, bookmarks, and instant search.
+              </p>
+            </div>
 
           <div className="flex items-center gap-2">
             <button
@@ -934,6 +1086,182 @@ export const FirmVaultView: React.FC = () => {
           </div>
         )}
 
+        {/* COLOR-CODED LABELS & TAG FILTER BAR */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span
+              className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1 mr-1 ${
+                isDark ? 'text-slate-400' : 'text-slate-500'
+              }`}
+            >
+              <Tag className="w-3.5 h-3.5 text-purple-400" />
+              <span>Filter by Label:</span>
+            </span>
+
+            {/* All Labels Pill */}
+            <button
+              type="button"
+              onClick={() => setSelectedTagFilter(null)}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                selectedTagFilter === null
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : isDark
+                  ? 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 shadow-xs'
+              }`}
+            >
+              All Files ({permittedDocs.length})
+            </button>
+
+            {/* Custom Tag Filter Pills */}
+            {customTags.map((tag) => {
+              const meta = getTagColorMeta(tag.name, customTags);
+              const isSelected = selectedTagFilter?.toLowerCase() === tag.name.toLowerCase();
+              const count = permittedDocs.filter((d) =>
+                (d.tags || []).some(
+                  (t) => (t.startsWith('#') ? t.slice(1) : t).toLowerCase() === tag.name.toLowerCase()
+                )
+              ).length;
+
+              return (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() => setSelectedTagFilter(isSelected ? null : tag.name)}
+                  title={tag.description || `Filter by ${tag.name}`}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                    isSelected
+                      ? `ring-2 ring-offset-1 ring-purple-500 scale-105 shadow-sm ${meta.badgeClass}`
+                      : `${meta.badgeClass} opacity-80 hover:opacity-100 hover:scale-102`
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${meta.dotClass}`} />
+                  <span>{tag.name}</span>
+                  <span className="text-[10px] font-mono opacity-70">({count})</span>
+                </button>
+              );
+            })}
+
+            {/* Add New Custom Tag Button & Popover */}
+            <div className="relative inline-block">
+              <button
+                type="button"
+                onClick={() => setShowNewTagPopover(!showNewTagPopover)}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                  showNewTagPopover
+                    ? 'bg-purple-600 text-white border-purple-500 shadow-xs'
+                    : isDark
+                    ? 'bg-slate-900 border-dashed border-slate-700 text-slate-300 hover:text-white hover:border-purple-400'
+                    : 'bg-white border-dashed border-slate-300 text-slate-700 hover:border-purple-500 shadow-xs'
+                }`}
+                title="Create a new custom color-coded label"
+              >
+                <Plus className="w-3 h-3 text-purple-400" />
+                <span>New Label</span>
+              </button>
+
+              {showNewTagPopover && (
+                <div
+                  className={`absolute left-0 top-full mt-2 z-50 w-64 p-3.5 rounded-2xl border shadow-2xl space-y-2.5 animate-in fade-in zoom-in-95 ${
+                    isDark
+                      ? 'bg-slate-900 border-slate-700 text-slate-100 shadow-slate-950/90'
+                      : 'bg-white border-slate-200 text-slate-900 shadow-xl'
+                  }`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between pb-1.5 border-b border-inherit">
+                    <span className="font-bold text-xs flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-purple-400" />
+                      Create New Label
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewTagPopover(false)}
+                      className="p-0.5 rounded opacity-60 hover:opacity-100"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleCreateTopLevelTag} className="space-y-2.5">
+                    <div>
+                      <input
+                        type="text"
+                        value={newTagNameInput}
+                        onChange={(e) => setNewTagNameInput(e.target.value)}
+                        placeholder="Label name (e.g. Urgent, Q3-Audit)"
+                        autoFocus
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs outline-none focus:ring-1 focus:ring-purple-500 ${
+                          isDark
+                            ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500'
+                            : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
+                        Select Color
+                      </span>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {COLOR_OPTIONS.map((c) => (
+                          <button
+                            key={c.color}
+                            type="button"
+                            onClick={() => setNewTagColorInput(c.color)}
+                            title={c.label}
+                            className={`h-6 rounded-lg flex items-center justify-center transition-all ${
+                              newTagColorInput === c.color
+                                ? 'ring-2 ring-purple-500 scale-105 shadow-xs'
+                                : 'opacity-80 hover:opacity-100 hover:scale-105'
+                            }`}
+                            style={{ backgroundColor: c.hex }}
+                          >
+                            {newTagColorInput === c.color && (
+                              <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowNewTagPopover(false)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${
+                          isDark ? 'hover:bg-slate-800 text-slate-300' : 'hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={!newTagNameInput.trim()}
+                        className="px-3 py-1 rounded-lg text-xs font-semibold bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white shadow-xs transition-colors"
+                      >
+                        Create
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Clear Filter if active */}
+          {selectedTagFilter && (
+            <button
+              type="button"
+              onClick={() => setSelectedTagFilter(null)}
+              className="text-xs font-medium text-purple-400 hover:text-purple-300 flex items-center gap-1 shrink-0"
+            >
+              <X className="w-3 h-3" />
+              <span>Clear Label Filter</span>
+            </button>
+          )}
+        </div>
+
         {/* Table View Mode */}
         {viewMode === 'list' ? (
           <div
@@ -977,7 +1305,13 @@ export const FirmVaultView: React.FC = () => {
                   return (
                     <tr
                       key={doc.id}
-                      onClick={() => setSelectedDocId(doc.id)}
+                      onClick={(e) => {
+                        if (e.shiftKey || selectedDocIds.size > 0) {
+                          handleToggleSelectDoc(doc.id, idx, e);
+                        } else {
+                          setSelectedDocId(doc.id);
+                        }
+                      }}
                       className={`cursor-pointer transition-colors group ${
                         isChecked
                           ? isDark
@@ -1000,9 +1334,9 @@ export const FirmVaultView: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={isChecked}
-                          onChange={(e) => handleToggleSelectDoc(doc.id, e)}
+                          onChange={(e) => handleToggleSelectDoc(doc.id, idx, e)}
                           className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
-                          title="Select item for bulk actions"
+                          title="Select item for batch operations (Shift+Click to select range)"
                         />
                       </td>
 
@@ -1012,6 +1346,29 @@ export const FirmVaultView: React.FC = () => {
                           <div className="mt-0.5">{getFileIcon(doc.fileName)}</div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
+                              {/* Star / Pin to Favorites Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleFavoriteDoc(doc.id);
+                                }}
+                                title={
+                                  favoriteDocIds.includes(doc.id) || doc.isFavorite
+                                    ? 'Remove from Favorites'
+                                    : 'Pin to Favorites'
+                                }
+                                className="p-0.5 rounded hover:bg-slate-800/40 text-slate-400 hover:text-amber-400 transition-colors"
+                              >
+                                <Star
+                                  className={`w-3.5 h-3.5 ${
+                                    favoriteDocIds.includes(doc.id) || doc.isFavorite
+                                      ? 'text-amber-400 fill-amber-400'
+                                      : 'stroke-1 text-slate-400 hover:text-amber-400'
+                                  }`}
+                                />
+                              </button>
+
                               <span
                                 className={`font-semibold transition-colors truncate block ${
                                   isDark
@@ -1021,17 +1378,85 @@ export const FirmVaultView: React.FC = () => {
                               >
                                 {doc.title}
                               </span>
+
+                              {/* Version History Button */}
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  setSidebarTab('versions');
                                   setActiveVersionDoc(doc);
+                                  recordRecentItem({
+                                    id: doc.id,
+                                    name: doc.title,
+                                    type: 'file',
+                                    ext: doc.fileName.split('.').pop(),
+                                    fileSize: doc.fileSize,
+                                  });
                                 }}
-                                title="Click to view version history and rollback"
-                                className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-slate-800/80 hover:bg-purple-600 hover:text-white text-purple-300 border border-purple-500/30 transition-colors"
+                                title="Open Version History Sidebar"
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold flex items-center gap-1 transition-all ${
+                                  activeVersionDoc?.id === doc.id && sidebarTab === 'versions'
+                                    ? 'bg-purple-600 text-white shadow-xs'
+                                    : 'bg-purple-950/60 hover:bg-purple-600 hover:text-white text-purple-300 border border-purple-500/30'
+                                }`}
                               >
-                                {doc.currentVersion || 'v1.0'}
+                                <History className="w-2.5 h-2.5" />
+                                <span>{doc.currentVersion || 'v1.0'}</span>
                               </button>
+
+                              {/* Activity Log Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSidebarTab('activity');
+                                  setActiveVersionDoc(doc);
+                                  recordRecentItem({
+                                    id: doc.id,
+                                    name: doc.title,
+                                    type: 'file',
+                                    ext: doc.fileName.split('.').pop(),
+                                    fileSize: doc.fileSize,
+                                  });
+                                }}
+                                title="Open Activity Log Feed (Events like moved, tagged, restored)"
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                                  activeVersionDoc?.id === doc.id && sidebarTab === 'activity'
+                                    ? 'bg-blue-600 text-white shadow-xs'
+                                    : 'bg-blue-950/40 hover:bg-blue-600 hover:text-white text-blue-300 border border-blue-500/30'
+                                }`}
+                              >
+                                <Activity className="w-2.5 h-2.5" />
+                                <span>Activity</span>
+                              </button>
+
+                              {/* OCR Status & Transcript Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSidebarTab('ocr');
+                                  setActiveVersionDoc(doc);
+                                  recordRecentItem({
+                                    id: doc.id,
+                                    name: doc.title,
+                                    type: 'file',
+                                    ext: doc.fileName.split('.').pop(),
+                                    fileSize: doc.fileSize,
+                                  });
+                                }}
+                                title="Inspect OCR full-text index & optical confidence"
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 transition-all ${
+                                  activeVersionDoc?.id === doc.id && sidebarTab === 'ocr'
+                                    ? 'bg-indigo-600 text-white shadow-xs'
+                                    : 'bg-indigo-950/40 hover:bg-indigo-600 hover:text-white text-indigo-300 border border-indigo-500/30'
+                                }`}
+                              >
+                                <Scan className="w-2.5 h-2.5" />
+                                <span>OCR</span>
+                              </button>
+
                               {doc.isHeld && (
                                 <span
                                   title="Litigation Preservation Active - Deletion Blocked"
@@ -1042,6 +1467,18 @@ export const FirmVaultView: React.FC = () => {
                                 </span>
                               )}
                             </div>
+
+                            {/* Full-Text OCR Match Excerpt if query matches extracted text */}
+                            {searchTerm && ocrService.highlightOCRMatch(doc.ocrExtractedText, searchTerm).matches && (
+                              <div className="mt-1 text-[11px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-lg border border-indigo-500/20 flex items-center gap-1.5 animate-in fade-in">
+                                <Scan className="w-3 h-3 shrink-0 text-indigo-400" />
+                                <span className="font-bold shrink-0">OCR Match:</span>
+                                <span className="truncate italic">
+                                  {ocrService.highlightOCRMatch(doc.ocrExtractedText, searchTerm).excerpt}
+                                </span>
+                              </div>
+                            )}
+
                             <div className="flex items-center gap-2 mt-1 flex-wrap">
                               <span
                                 className={`text-[11px] truncate ${
@@ -1051,32 +1488,58 @@ export const FirmVaultView: React.FC = () => {
                                 {doc.fileName} · {m?.matterNumber}
                               </span>
 
-                              {/* Tags preview */}
-                              {doc.tags && doc.tags.length > 0 && (
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  {doc.tags.slice(0, 3).map((tag, tIdx) => (
+                              {/* Color-Coded Labels */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {(doc.tags || []).slice(0, 4).map((tag, tIdx) => {
+                                  const meta = getTagColorMeta(tag, customTags);
+                                  const clean = tag.startsWith('#') ? tag.slice(1) : tag;
+                                  return (
                                     <span
                                       key={tIdx}
-                                      className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-medium border ${
-                                        tag.startsWith('#')
-                                          ? isDark
-                                            ? 'bg-purple-950/40 text-purple-300 border-purple-800/50'
-                                            : 'bg-purple-50 text-purple-700 border-purple-200'
-                                          : isDark
-                                          ? 'bg-slate-800 text-slate-300 border-slate-700'
-                                          : 'bg-slate-100 text-slate-600 border-slate-200'
-                                      }`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedTagFilter(selectedTagFilter === clean ? null : clean);
+                                      }}
+                                      title={`Filter by label: ${clean}`}
+                                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border cursor-pointer hover:scale-105 transition-transform ${meta.badgeClass}`}
                                     >
-                                      {tag}
+                                      <span className={`w-1.5 h-1.5 rounded-full ${meta.dotClass}`} />
+                                      <span>{clean}</span>
                                     </span>
-                                  ))}
-                                  {doc.tags.length > 3 && (
-                                    <span className="text-[9px] opacity-60 font-mono">
-                                      +{doc.tags.length - 3}
-                                    </span>
+                                  );
+                                })}
+                                {(doc.tags || []).length > 4 && (
+                                  <span className="text-[10px] opacity-60 font-mono">
+                                    +{(doc.tags || []).length - 4}
+                                  </span>
+                                )}
+
+                                {/* Single Doc Tag Quick Menu */}
+                                <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingDocTagsId(editingDocTagsId === doc.id ? null : doc.id)}
+                                    title="Add or remove labels"
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border border-purple-500/30 transition-all"
+                                  >
+                                    <Plus className="w-2.5 h-2.5" />
+                                    <span>Label</span>
+                                  </button>
+
+                                  {editingDocTagsId === doc.id && (
+                                    <div className="absolute left-0 top-full mt-1.5 z-50">
+                                      <DocumentTagEditor
+                                        document={doc}
+                                        availableTags={customTags}
+                                        isDark={isDark}
+                                        onClose={() => setEditingDocTagsId(null)}
+                                        onToggleTag={handleToggleTagOnDoc}
+                                        onAddCustomTag={addCustomTag}
+                                      />
+                                    </div>
                                   )}
                                 </div>
-                              )}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1192,7 +1655,7 @@ export const FirmVaultView: React.FC = () => {
         ) : (
           /* Grid View Mode */
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {filteredDocs.map((doc) => {
+            {filteredDocs.map((doc, idx) => {
               const isChecked = selectedDocIds.has(doc.id);
               const isCardActive = selectedDocId === doc.id;
 
@@ -1217,7 +1680,7 @@ export const FirmVaultView: React.FC = () => {
                       <input
                         type="checkbox"
                         checked={isChecked}
-                        onChange={(e) => handleToggleSelectDoc(doc.id, e)}
+                        onChange={(e) => handleToggleSelectDoc(doc.id, idx, e)}
                         onClick={(e) => e.stopPropagation()}
                         className="rounded border-slate-700 text-blue-600 focus:ring-blue-500 cursor-pointer w-4 h-4"
                         title="Select for bulk operations"
@@ -1225,6 +1688,29 @@ export const FirmVaultView: React.FC = () => {
                       {getFileIcon(doc.fileName)}
                     </div>
                     <div className="flex items-center gap-1">
+                      {/* Star / Pin Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavoriteDoc(doc.id);
+                        }}
+                        title={
+                          favoriteDocIds.includes(doc.id) || doc.isFavorite
+                            ? 'Remove from Favorites'
+                            : 'Pin to Favorites'
+                        }
+                        className="p-1 rounded text-slate-400 hover:text-amber-400 transition-colors"
+                      >
+                        <Star
+                          className={`w-3.5 h-3.5 ${
+                            favoriteDocIds.includes(doc.id) || doc.isFavorite
+                              ? 'text-amber-400 fill-amber-400'
+                              : 'stroke-1'
+                          }`}
+                        />
+                      </button>
+
                       {/* ML Auto-Tag */}
                       <button
                         onClick={(e) => handleTriggerAutoTagForDoc(doc, e)}
@@ -1233,18 +1719,82 @@ export const FirmVaultView: React.FC = () => {
                             ? 'text-purple-400 hover:text-purple-300 hover:bg-purple-950/40'
                             : 'text-purple-600 hover:text-purple-700 hover:bg-purple-50'
                         }`}
-                        title="AI Legal Matter Auto-Tagging"
+                        title="AI Document Tagging"
                       >
                         <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      </button>
+
+                      {/* Activity Log Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSidebarTab('activity');
+                          setActiveVersionDoc(doc);
+                          recordRecentItem({
+                            id: doc.id,
+                            name: doc.title,
+                            type: 'file',
+                            ext: doc.fileName.split('.').pop(),
+                            fileSize: doc.fileSize,
+                          });
+                        }}
+                        className={`p-1 rounded transition-colors ${
+                          activeVersionDoc?.id === doc.id && sidebarTab === 'activity'
+                            ? 'bg-blue-600 text-white'
+                            : isDark
+                            ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-950/40'
+                            : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50'
+                        }`}
+                        title="View Activity Log Feed"
+                      >
+                        <Activity className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* OCR Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSidebarTab('ocr');
+                          setActiveVersionDoc(doc);
+                          recordRecentItem({
+                            id: doc.id,
+                            name: doc.title,
+                            type: 'file',
+                            ext: doc.fileName.split('.').pop(),
+                            fileSize: doc.fileSize,
+                          });
+                        }}
+                        className={`p-1 rounded transition-colors ${
+                          activeVersionDoc?.id === doc.id && sidebarTab === 'ocr'
+                            ? 'bg-indigo-600 text-white'
+                            : isDark
+                            ? 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40'
+                            : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
+                        }`}
+                        title="View OCR Transcript & Search Index"
+                      >
+                        <Scan className="w-3.5 h-3.5" />
                       </button>
 
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          setSidebarTab('versions');
                           setActiveVersionDoc(doc);
+                          recordRecentItem({
+                            id: doc.id,
+                            name: doc.title,
+                            type: 'file',
+                            ext: doc.fileName.split('.').pop(),
+                            fileSize: doc.fileSize,
+                          });
                         }}
-                        className="p-1 text-purple-400 hover:text-purple-300 hover:bg-purple-950/40 rounded"
-                        title="Version History & Rollback"
+                        className={`p-1 rounded transition-colors ${
+                          activeVersionDoc?.id === doc.id && sidebarTab === 'versions'
+                            ? 'bg-purple-600 text-white'
+                            : 'text-purple-400 hover:text-purple-300 hover:bg-purple-950/40'
+                        }`}
+                        title="Version History Sidebar & Rollback"
                       >
                         <History className="w-4 h-4" />
                       </button>
@@ -1280,38 +1830,76 @@ export const FirmVaultView: React.FC = () => {
                     >
                       {doc.fileName}
                     </div>
+
+                    {/* Full-Text OCR Match Excerpt if query matches extracted text */}
+                    {searchTerm && ocrService.highlightOCRMatch(doc.ocrExtractedText, searchTerm).matches && (
+                      <div className="mt-1 text-[10px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 flex items-center gap-1 animate-in fade-in">
+                        <Scan className="w-2.5 h-2.5 shrink-0 text-indigo-400" />
+                        <span className="font-bold shrink-0">OCR:</span>
+                        <span className="truncate italic">
+                          {ocrService.highlightOCRMatch(doc.ocrExtractedText, searchTerm).excerpt}
+                        </span>
+                      </div>
+                    )}
+
                     {doc.isHeld && (
                       <span className="inline-block mt-1 px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-500 text-[10px] font-bold border border-rose-500/30">
                         HOLD ACTIVE
                       </span>
                     )}
 
-                    {/* Tag preview in Grid */}
-                    {doc.tags && doc.tags.length > 0 && (
-                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                        {doc.tags.slice(0, 2).map((tag, tIdx) => (
+                    {/* Color-Coded Labels & Tag Editor in Grid */}
+                    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                      {(doc.tags || []).slice(0, 3).map((tag, tIdx) => {
+                        const meta = getTagColorMeta(tag, customTags);
+                        const clean = tag.startsWith('#') ? tag.slice(1) : tag;
+                        return (
                           <span
                             key={tIdx}
-                            className={`px-1 py-0.2 rounded text-[9px] font-mono font-medium border truncate max-w-[110px] ${
-                              tag.startsWith('#')
-                                ? isDark
-                                ? 'bg-purple-950/40 text-purple-300 border-purple-800/40'
-                                : 'bg-purple-50 text-purple-700 border-purple-200'
-                                : isDark
-                                ? 'bg-slate-800 text-slate-300 border-slate-700'
-                                : 'bg-slate-100 text-slate-600 border-slate-200'
-                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedTagFilter(selectedTagFilter === clean ? null : clean);
+                            }}
+                            title={`Filter by label: ${clean}`}
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border cursor-pointer hover:scale-105 transition-transform ${meta.badgeClass}`}
                           >
-                            {tag}
+                            <span className={`w-1.5 h-1.5 rounded-full ${meta.dotClass}`} />
+                            <span className="truncate max-w-[80px]">{clean}</span>
                           </span>
-                        ))}
-                        {doc.tags.length > 2 && (
-                          <span className="text-[9px] opacity-60 font-mono">
-                            +{doc.tags.length - 2}
-                          </span>
+                        );
+                      })}
+                      {(doc.tags || []).length > 3 && (
+                        <span className="text-[9px] opacity-60 font-mono">
+                          +{(doc.tags || []).length - 3}
+                        </span>
+                      )}
+
+                      {/* Add/Edit Label button in Grid */}
+                      <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => setEditingDocTagsId(editingDocTagsId === doc.id ? null : doc.id)}
+                          title="Add or remove labels"
+                          className="px-1.5 py-0.5 rounded text-[9px] font-semibold flex items-center gap-0.5 bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border border-purple-500/30 transition-all"
+                        >
+                          <Plus className="w-2.5 h-2.5" />
+                          <span>Label</span>
+                        </button>
+
+                        {editingDocTagsId === doc.id && (
+                          <div className="absolute left-0 bottom-full mb-1.5 z-50">
+                            <DocumentTagEditor
+                              document={doc}
+                              availableTags={customTags}
+                              isDark={isDark}
+                              onClose={() => setEditingDocTagsId(null)}
+                              onToggleTag={handleToggleTagOnDoc}
+                              onAddCustomTag={addCustomTag}
+                            />
+                          </div>
                         )}
                       </div>
-                    )}
+                    </div>
                   </div>
                   <div
                     className={`flex items-center justify-between text-[11px] border-t pt-2 font-num ${
@@ -1330,23 +1918,27 @@ export const FirmVaultView: React.FC = () => {
         )}
       </div>
 
+      {/* FILE DETAIL, ACTIVITY LOG & VERSION SIDEBAR (DOCKS TO RIGHT OF VAULT) */}
+      {activeVersionDoc && (
+        <DocumentVersionSidebar
+          document={documents.find((d) => d.id === activeVersionDoc.id) || activeVersionDoc}
+          initialTab={sidebarTab}
+          onClose={() => {
+            setActiveVersionDoc(null);
+            setActiveVersionSidebarDoc(null);
+          }}
+          onVersionReverted={(revertedDoc) => {
+            setActiveVersionDoc(documents.find((d) => d.id === revertedDoc.id) || revertedDoc);
+          }}
+        />
+      )}
+
       {/* ENHANCED FILE PREVIEW MODAL: METADATA, THUMBNAILS, AI SUMMARY & ROLLBACK */}
       {activePreviewDoc && (
         <FilePreviewModal
           document={documents.find((d) => d.id === activePreviewDoc.id) || activePreviewDoc}
           onClose={() => setActivePreviewDoc(null)}
           onDownload={handleDownload}
-        />
-      )}
-
-      {/* DEDICATED DOCUMENT VERSION CONTROL & ROLLBACK MODAL */}
-      {activeVersionDoc && (
-        <DocumentVersionModal
-          document={documents.find((d) => d.id === activeVersionDoc.id) || activeVersionDoc}
-          onClose={() => setActiveVersionDoc(null)}
-          onVersionReverted={(revertedDoc) => {
-            setActiveVersionDoc(documents.find((d) => d.id === revertedDoc.id) || revertedDoc);
-          }}
         />
       )}
 
@@ -1543,6 +2135,7 @@ export const FirmVaultView: React.FC = () => {
         onCopy={() => setBulkCopyModalOpen(true)}
         onDelete={() => setBulkDeleteModalOpen(true)}
         onAutoTag={handleTriggerAutoTagForSelected}
+        onTag={() => setBulkTagModalOpen(true)}
       />
 
       {/* BULK MOVE MODAL */}
@@ -1578,6 +2171,18 @@ export const FirmVaultView: React.FC = () => {
           isDark={isDark}
           onClose={() => setBulkDeleteModalOpen(false)}
           onConfirmDelete={handleExecuteBulkDelete}
+        />
+      )}
+
+      {/* BULK TAG MODAL */}
+      {bulkTagModalOpen && (
+        <BulkTagModal
+          selectedDocs={selectedDocs}
+          availableTags={customTags}
+          isDark={isDark}
+          onClose={() => setBulkTagModalOpen(false)}
+          onAddCustomTag={addCustomTag}
+          onApplyTags={handleExecuteBulkTag}
         />
       )}
 
@@ -1645,6 +2250,7 @@ export const FirmVaultView: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

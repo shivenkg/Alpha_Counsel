@@ -36,7 +36,6 @@ import { PartiesTab } from './tabs/PartiesTab';
 import { PaymentsTab } from './tabs/PaymentsTab';
 import { TasksTab } from './tabs/TasksTab';
 import { TimeTab } from './tabs/TimeTab';
-import { TrustTab } from './tabs/TrustTab';
 import { WIPTab } from './tabs/WIPTab';
 
 const SUB_TABS: { id: MatterSubTab; label: string; icon: any }[] = [
@@ -52,7 +51,6 @@ const SUB_TABS: { id: MatterSubTab; label: string; icon: any }[] = [
   { id: 'wip', label: 'WIP Review', icon: FileSpreadsheet },
   { id: 'invoices', label: 'Invoices', icon: FileText },
   { id: 'payments', label: 'Payments & A/R', icon: IndianRupee },
-  { id: 'trust', label: 'Trust (IOLTA)', icon: Shield },
   { id: 'activity', label: 'Audit Trail', icon: History },
 ];
 
@@ -276,7 +274,6 @@ export const MatterWorkspace: React.FC = () => {
         {matterSubTab === 'wip' && <WIPTab matter={matter} />}
         {matterSubTab === 'invoices' && <InvoicesTab matter={matter} />}
         {matterSubTab === 'payments' && <PaymentsTab matter={matter} />}
-        {matterSubTab === 'trust' && <TrustTab matter={matter} />}
         {matterSubTab === 'activity' && <AuditTab matter={matter} />}
       </div>
     </div>

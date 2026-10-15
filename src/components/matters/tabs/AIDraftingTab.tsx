@@ -10,23 +10,30 @@ import {
   FolderPlus,
   Loader2,
   Quote,
+  RotateCcw,
   Scale,
+  ShieldCheck,
   Sparkles,
   ToggleLeft,
   ToggleRight,
 } from 'lucide-react';
 import { useApp } from '../../../context/AppContext';
 import { generateLegalDraft } from '../../../services/aiService';
-import { AIDraftRequest, AIDraftResult, Matter } from '../../../types';
+import { AIDraftRequest, AIDraftResult, AILegalTemplate, Matter } from '../../../types';
+import { AITemplateLibrary } from './AITemplateLibrary';
 
 interface Props {
   matter: Matter;
 }
 
 export const AIDraftingTab: React.FC<Props> = ({ matter }) => {
-  const { documents, addDocument, logAudit, currentUser, theme } = useApp();
+  const { documents, addDocument, logAudit, currentUser, legalTemplates, theme } = useApp();
   const isDark = theme === 'dark';
   const matterDocs = documents.filter((d) => d.matterId === matter.id);
+
+  // Studio Mode: Drafter vs Template Library
+  const [activeStudioView, setActiveStudioView] = useState<'drafter' | 'templates'>('drafter');
+  const [appliedTemplate, setAppliedTemplate] = useState<AILegalTemplate | null>(null);
 
   const [documentType, setDocumentType] = useState<AIDraftRequest['documentType']>(
     'Motion for Summary Judgment'
@@ -48,6 +55,28 @@ export const AIDraftingTab: React.FC<Props> = ({ matter }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [draftResult, setDraftResult] = useState<AIDraftResult | null>(null);
   const [committedToVault, setCommittedToVault] = useState(false);
+
+  const handleApplyTemplate = (tmpl: AILegalTemplate) => {
+    setAppliedTemplate(tmpl);
+    setDocumentType(tmpl.documentType as any);
+    setJurisdiction(tmpl.jurisdiction);
+    setClientPosition(tmpl.defaultClientPosition);
+    setKeyLegalArguments(tmpl.defaultKeyLegalArguments);
+    setActiveStudioView('drafter');
+
+    logAudit(
+      'AI_DRAFT_REQUESTED',
+      'AI',
+      tmpl.id,
+      `Applied firm legal template "${tmpl.title}" (${tmpl.firmApprovalStatus}) for matter ${matter.matterNumber}.`,
+      matter.id,
+      matter.matterNumber
+    );
+  };
+
+  const handleClearTemplate = () => {
+    setAppliedTemplate(null);
+  };
 
   const toggleDocSelection = (id: string) => {
     setSelectedDocIds((prev) =>
@@ -127,78 +156,233 @@ export const AIDraftingTab: React.FC<Props> = ({ matter }) => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Studio Header & Sub-Navigation */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800/60 pb-4">
         <div>
-          <h3
-            className={`text-sm font-semibold flex items-center gap-2 ${
-              isDark ? 'text-slate-100' : 'text-slate-900'
-            }`}
-          >
-            <Sparkles className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-blue-600'}`} />
-            AI Drafting Studio & Citation Mapping
-          </h3>
-          <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            Jurisdictional brief synthesis, grounded against authorized Matter Vault records
+          <div className="flex items-center gap-2">
+            <h3
+              className={`text-base font-bold flex items-center gap-2 tracking-tight ${
+                isDark ? 'text-slate-100' : 'text-slate-900'
+              }`}
+            >
+              <Sparkles className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-blue-600'}`} />
+              AI Drafting Studio & Knowledge Repository
+            </h3>
+            <span
+              className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-semibold ${
+                isDark
+                  ? 'bg-blue-950/60 text-blue-400 border-blue-800/60'
+                  : 'bg-blue-50 text-blue-700 border-blue-200'
+              }`}
+            >
+              {matter.matterNumber}
+            </span>
+          </div>
+          <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+            Jurisdictional brief synthesis, grounded against authorized Matter Vault records and firm-approved templates.
           </p>
         </div>
 
-        {draftResult && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopy}
-              className={`flex items-center gap-1.5 px-3 py-1.5 border text-xs font-medium rounded transition-colors ${
-                isDark
-                  ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
-                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100 shadow-xs'
-              }`}
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copy Text</span>
-            </button>
-            <button
-              onClick={handleCommitToVault}
-              disabled={committedToVault}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors shadow ${
-                committedToVault
-                  ? isDark
-                    ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
-                    : 'bg-emerald-50 text-emerald-700 border border-emerald-300'
-                  : 'bg-blue-600 hover:bg-blue-500 text-white'
-              }`}
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-              <span>{committedToVault ? 'Committed to Vault (v1.0)' : 'Save to Vault'}</span>
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left 5 Cols: Configuration Parameters & Vault Grounding */}
-        <div
-          className={`lg:col-span-5 rounded-lg p-5 space-y-4 border ${
-            isDark
-              ? 'bg-slate-900/90 border-slate-800'
-              : 'bg-white border-slate-200 shadow-xs'
-          }`}
-        >
+        {/* View Switcher: Drafter vs Template Library */}
+        <div className="flex items-center gap-2">
           <div
-            className={`text-xs font-semibold uppercase tracking-wider border-b pb-2 ${
-              isDark ? 'text-slate-200 border-slate-800' : 'text-slate-800 border-slate-100'
+            className={`p-1 rounded-xl border flex items-center gap-1 ${
+              isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'
             }`}
           >
-            Drafting Specifications
-          </div>
-
-          <div>
-            <label
-              className={`block text-[11px] uppercase tracking-wider mb-1 ${
-                isDark ? 'text-slate-400' : 'text-slate-600'
+            <button
+              onClick={() => setActiveStudioView('drafter')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeStudioView === 'drafter'
+                  ? isDark
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                  : isDark
+                  ? 'text-slate-400 hover:text-slate-200'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Instrument Type
-            </label>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Draft Synthesizer</span>
+            </button>
+
+            <button
+              onClick={() => setActiveStudioView('templates')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeStudioView === 'templates'
+                  ? isDark
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'bg-white text-slate-900 shadow-xs border border-slate-200'
+                  : isDark
+                  ? 'text-slate-400 hover:text-slate-200'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Firm Template Library</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  activeStudioView === 'templates'
+                    ? isDark
+                      ? 'bg-slate-900 text-amber-400'
+                      : 'bg-slate-200 text-slate-800'
+                    : isDark
+                    ? 'bg-slate-800 text-slate-300'
+                    : 'bg-slate-200 text-slate-700'
+                }`}
+              >
+                {legalTemplates.length}
+              </span>
+            </button>
+          </div>
+
+          {activeStudioView === 'drafter' && draftResult && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopy}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  isDark
+                    ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100 shadow-xs'
+                }`}
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy</span>
+              </button>
+              <button
+                onClick={handleCommitToVault}
+                disabled={committedToVault}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors shadow cursor-pointer ${
+                  committedToVault
+                    ? isDark
+                      ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-300'
+                    : 'bg-blue-600 hover:bg-blue-500 text-white'
+                }`}
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                <span>{committedToVault ? 'In Vault (v1.0)' : 'Save to Vault'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Render Template Library if selected */}
+      {activeStudioView === 'templates' ? (
+        <AITemplateLibrary
+          onSelectTemplate={handleApplyTemplate}
+          activeTemplateId={appliedTemplate?.id}
+          matter={matter}
+          onClose={() => setActiveStudioView('drafter')}
+        />
+      ) : (
+        <>
+          {/* Active Template Applied Banner */}
+          {appliedTemplate && (
+            <div
+              className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-colors ${
+                isDark
+                  ? 'bg-amber-950/20 border-amber-800/40 text-amber-200'
+                  : 'bg-amber-50 border-amber-300 text-amber-900'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-sm text-amber-300">
+                      Applied Firm Standard: {appliedTemplate.title}
+                    </span>
+                    <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {appliedTemplate.firmApprovalStatus.replace(/_/g, ' ')} · {appliedTemplate.version}
+                    </span>
+                  </div>
+                  <p className="text-[11px] opacity-85 mt-1 leading-relaxed">
+                    Signoff: <strong>{appliedTemplate.approvalSignoff}</strong> · Pre-configured with {appliedTemplate.statutoryCitations.length} statutory citations and {appliedTemplate.mandatoryClauses.length} mandatory clauses.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setActiveStudioView('templates')}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 text-slate-950 hover:bg-amber-400 transition-colors cursor-pointer"
+                >
+                  Change Template
+                </button>
+                <button
+                  onClick={handleClearTemplate}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors cursor-pointer ${
+                    isDark
+                      ? 'border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Clear Form
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left 5 Cols: Configuration Parameters & Vault Grounding */}
+            <div
+              className={`lg:col-span-5 rounded-2xl p-5 space-y-4 border ${
+                isDark
+                  ? 'bg-slate-900/90 border-slate-800'
+                  : 'bg-white border-slate-200 shadow-xs'
+              }`}
+            >
+              <div className="flex items-center justify-between border-b pb-2.5">
+                <div
+                  className={`text-xs font-semibold uppercase tracking-wider ${
+                    isDark ? 'text-slate-200' : 'text-slate-800'
+                  }`}
+                >
+                  Drafting Specifications
+                </div>
+
+                <button
+                  onClick={() => setActiveStudioView('templates')}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-amber-500 hover:text-amber-400 cursor-pointer"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Choose Template</span>
+                </button>
+              </div>
+
+              {/* Template quick loader button */}
+              <button
+                onClick={() => setActiveStudioView('templates')}
+                className={`w-full py-2.5 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  appliedTemplate
+                    ? isDark
+                      ? 'bg-amber-950/30 border-amber-800/60 text-amber-300'
+                      : 'bg-amber-50 border-amber-300 text-amber-900'
+                    : isDark
+                    ? 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
+                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50/50'
+                }`}
+              >
+                <BookOpen className="w-4 h-4 text-amber-500" />
+                <span>
+                  {appliedTemplate
+                    ? `Active Template: ${appliedTemplate.title.slice(0, 32)}...`
+                    : `Browse Firm Template Library (${legalTemplates.length} filings)`}
+                </span>
+              </button>
+
+              <div>
+                <label
+                  className={`block text-[11px] uppercase tracking-wider mb-1 ${
+                    isDark ? 'text-slate-400' : 'text-slate-600'
+                  }`}
+                >
+                  Instrument Type
+                </label>
             <select
               value={documentType}
               onChange={(e) => setDocumentType(e.target.value as any)}
@@ -276,6 +460,65 @@ export const AIDraftingTab: React.FC<Props> = ({ matter }) => {
               }`}
             />
           </div>
+
+          {/* Applied Template Mandatory Clauses & Citations Checklist */}
+          {appliedTemplate && (
+            <div
+              className={`p-3 rounded-xl border text-xs space-y-2.5 ${
+                isDark
+                  ? 'bg-slate-950/70 border-amber-900/40 text-slate-300'
+                  : 'bg-amber-50/50 border-amber-200 text-slate-800'
+              }`}
+            >
+              <div className="flex items-center justify-between text-[11px] font-semibold text-amber-500">
+                <span className="flex items-center gap-1.5">
+                  <Scale className="w-3.5 h-3.5" />
+                  Mandatory Firm Clauses & Precedents
+                </span>
+                <span className="font-mono text-[10px]">{appliedTemplate.version}</span>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                  Required Clauses:
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {appliedTemplate.mandatoryClauses.map((clause, idx) => (
+                    <span
+                      key={idx}
+                      className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                        isDark
+                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                          : 'bg-amber-100 text-amber-900 border-amber-300 font-medium'
+                      }`}
+                    >
+                      ✓ {clause}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                  Statutory & Case Law Precedents:
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {appliedTemplate.statutoryCitations.map((cite, idx) => (
+                    <span
+                      key={idx}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        isDark
+                          ? 'bg-slate-900 text-slate-300 border-slate-700'
+                          : 'bg-white text-slate-800 border-slate-300'
+                      }`}
+                    >
+                      § {cite}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Vault Document Selection for Context Injection */}
           <div>
@@ -524,6 +767,8 @@ export const AIDraftingTab: React.FC<Props> = ({ matter }) => {
           </div>
         </div>
       </div>
-    </div>
-  );
+    </>
+  )}
+</div>
+);
 };

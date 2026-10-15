@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency } from '../../services/financials';
+import { AuditLogView } from './AuditLogView';
 import {
   BOUNDED_DOMAINS,
   checkPermission,
@@ -72,9 +73,13 @@ export const RbacManagementView: React.FC = () => {
     theme,
     toggleTheme,
     setCurrentView,
+    adminTab,
+    setAdminTab,
+    audit_events,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'matrix' | 'users' | 'simulator'>('matrix');
+  const activeTab = adminTab || 'matrix';
+  const setActiveTab = setAdminTab;
   const [selectedRole, setSelectedRole] = useState<StandardRole>('Administrator');
 
   // User Management Modal State
@@ -364,6 +369,20 @@ export const RbacManagementView: React.FC = () => {
             <Sliders className="w-3.5 h-3.5 text-blue-400" />
             <span>Customise Plan & Quotas</span>
           </button>
+
+          {/* Audit Trail Quick Access Button */}
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-xs whitespace-nowrap border ${
+              activeTab === 'audit'
+                ? 'bg-blue-600 text-white border-blue-500'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+            }`}
+            title="Inspect sensitive actions, ethical wall events and document access"
+          >
+            <History className="w-3.5 h-3.5 text-amber-400" />
+            <span>Audit Trail ({audit_events.length})</span>
+          </button>
         </div>
       </div>
 
@@ -413,6 +432,31 @@ export const RbacManagementView: React.FC = () => {
         >
           <ShieldAlert className="w-3.5 h-3.5" />
           <span>Live Policy Simulator</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('audit')}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl transition-all ${
+            activeTab === 'audit'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : isDark
+              ? 'text-slate-400 hover:text-white hover:bg-slate-900'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <History className="w-3.5 h-3.5 text-amber-400" />
+          <span>Audit Log & Security Trail</span>
+          <span
+            className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+              activeTab === 'audit'
+                ? 'bg-white/20 text-white'
+                : isDark
+                ? 'bg-slate-800 text-slate-300'
+                : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            {audit_events.length}
+          </span>
         </button>
       </div>
 
@@ -848,6 +892,11 @@ export const RbacManagementView: React.FC = () => {
             )}
           </div>
         </div>
+      )}
+
+      {/* TAB 4: Forensic Audit Log & Security Trail */}
+      {activeTab === 'audit' && (
+        <AuditLogView />
       )}
 
       {/* Add Firm User Modal with Seat Quota Guard */}
